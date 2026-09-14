@@ -14,8 +14,7 @@
   vars:
     aap_hostname: >-
       {{ (lookup('ansible.builtin.env', 'AAP_HOSTNAME') or lookup('ansible.builtin.env', 'CONTROLLER_HOST'))
-         | regex_replace('/+$', '') | regex_replace('/api/controller$', '')
-         | regex_replace('^(?!https?://)', 'https://') }}
+         | regex_replace('/+$', '') | regex_replace('/api/controller$', '') }}
     aap_username: "{{ lookup('ansible.builtin.env', 'AAP_USERNAME') or lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') }}"
     aap_password: "{{ lookup('ansible.builtin.env', 'AAP_PASSWORD') or lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') }}"
     aap_token: "{{ lookup('ansible.builtin.env', 'AAP_TOKEN') or lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') }}"
@@ -44,6 +43,7 @@
     # The collection roles prefer a token when one is defined, even if empty.
     - name: Drop empty authentication settings
       ansible.builtin.set_fact:
+        uc_api_base: "{{ aap_hostname if aap_hostname is match('https?://') else 'https://' ~ aap_hostname }}"
         uc_use_token: "{{ aap_token | length > 0 }}"
         uc_api_token: "{{ aap_token }}"
         uc_api_username: "{{ aap_username }}"
@@ -61,7 +61,7 @@
     # once the EDA project has finished importing.
     - name: Find the EDA project
       ansible.builtin.uri:
-        url: "{{ aap_hostname }}/api/eda/v1/projects/?name={{ 'AAP Use Cases' | urlencode }}"
+        url: "{{ uc_api_base }}/api/eda/v1/projects/?name={{ 'AAP Use Cases' | urlencode }}"
         headers: "{{ uc_api_headers }}"
         url_username: "{{ omit if uc_use_token else uc_api_username }}"
         url_password: "{{ omit if uc_use_token else uc_api_password }}"
@@ -73,7 +73,7 @@
 
     - name: Sync the EDA project (a sync already in progress is fine)
       ansible.builtin.uri:
-        url: "{{ aap_hostname }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/sync/"
+        url: "{{ uc_api_base }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/sync/"
         method: POST
         headers: "{{ uc_api_headers }}"
         url_username: "{{ omit if uc_use_token else uc_api_username }}"
@@ -86,7 +86,7 @@
 
     - name: Wait for the EDA project import to finish
       ansible.builtin.uri:
-        url: "{{ aap_hostname }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/"
+        url: "{{ uc_api_base }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/"
         headers: "{{ uc_api_headers }}"
         url_username: "{{ omit if uc_use_token else uc_api_username }}"
         url_password: "{{ omit if uc_use_token else uc_api_password }}"
