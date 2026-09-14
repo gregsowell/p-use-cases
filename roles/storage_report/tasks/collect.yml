@@ -1,0 +1,57 @@
+---
+# Runs on each target (RHEL or AIX). Read-only: nothing here changes the host.
+# `df -P` (POSIX output) is available on both Linux and AIX and never wraps
+# long device names, so one parser serves both platforms.
+
+- name: Gather minimal platform facts
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+
+- name: Query filesystem utilization for each path
+  ansible.builtin.command:
+    argv: [df, -P, -k, "{{ item }}"]
+  loop: "{{ sr_paths }}"
+  register: sr_df
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Parse utilization rows
+  ansible.builtin.set_fact:
+    sr_rows: "{{ sr_rows | default([]) + [sr_row] }}"
+  loop: "{{ sr_df.results }}"
+  loop_control:
+    loop_var: sr_r
+    label: "{{ sr_r.item }}"
+  vars:
+    sr_ok: "{{ sr_r.rc == 0 and sr_r.stdout_lines | length >= 2 }}"
+    sr_block: "{{ (sr_r.stdout_lines[0] | regex_search('([0-9]+)-blocks', '\\1') | default(['1024'], true) | first) | int if sr_ok else 1024 }}"
+    sr_f: "{{ sr_r.stdout_lines[-1].split() if sr_ok else [] }}"
+    sr_total: "{{ (sr_f[1] | int) * (sr_block | int) if sr_ok else 0 }}"
+    sr_used: "{{ (sr_f[2] | int) * (sr_block | int) if sr_ok else 0 }}"
+    sr_avail: "{{ (sr_f[3] | int) * (sr_block | int) if sr_ok else 0 }}"
+    sr_pct: "{{ sr_f[4] | replace('%', '') | int if sr_ok else 0 }}"
+    sr_row:
+      server: "{{ inventory_hostname }}"
+      platform: "{{ ansible_facts['system'] | default('unknown') }}"
+      requested_path: "{{ sr_r.item }}"
+      filesystem: "{{ sr_f[0] if sr_ok else '-' }}"
+      mount: "{{ sr_f[5:] | join(' ') if sr_ok else '-' }}"
+      total_bytes: "{{ sr_total | int }}"
+      used_bytes: "{{ sr_used | int }}"
+      avail_bytes: "{{ sr_avail | int }}"
+      pct_used: "{{ sr_pct | int }}"
+      state: >-
+        {{ 'CRITICAL' if sr_ok and sr_pct | int >= storage_report_crit_pct | int
+           else ('WARNING' if sr_ok and sr_pct | int >= storage_report_warn_pct | int
+           else ('OK' if sr_ok
+           else ('NOT FOUND' if 'no such file' in (sr_r.stderr | default('') | lower) or 'does not exist' in (sr_r.stderr | default('') | lower)
+           else 'ERROR'))) }}
+      message: "{{ sr_r.stderr | default('') | trim }}"
+
+- name: Collect troubleshooting detail
+  ansible.builtin.include_tasks: deep_dive.yml
+  when:
+    - sr_deep | bool
+    - sr_rows | default([]) | selectattr('state', 'in', ['OK', 'WARNING', 'CRITICAL']) | list | length > 0

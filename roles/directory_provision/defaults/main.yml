@@ -1,0 +1,56 @@
+---
+# ---------------------------------------------------------------------------
+# Request inputs (normally supplied by the AAP workflow survey)
+# ---------------------------------------------------------------------------
+target_hosts: ""        # comma-separated inventory hosts and/or groups
+directory_list: ""      # comma- or newline-separated absolute paths
+dir_owner: ""
+dir_group: ""
+dir_mode: ""            # optional octal, e.g. 0755 or 2775; blank = platform default
+
+# ---------------------------------------------------------------------------
+# Guardrails
+# ---------------------------------------------------------------------------
+# Paths that may never be requested themselves (children are still allowed
+# unless they also fall under a denied prefix).
+directory_provision_protected_paths:
+  - /
+  - /admin
+  - /home
+  - /opt
+  - /srv
+  - /tmp
+  - /var
+  - /var/tmp
+
+# Nothing may be created at or beneath these prefixes.
+directory_provision_denied_prefixes:
+  - /bin
+  - /boot
+  - /dev
+  - /etc
+  - /lib
+  - /lib64
+  - /proc
+  - /root
+  - /run
+  - /sbin
+  - /sys
+  - /usr
+
+# When non-empty, every requested path must live under one of these
+# (e.g. [/app, /data, /u01]). Empty = no allow-list.
+directory_provision_allowed_prefixes: []
+
+# Largest number of paths accepted in a single request.
+directory_provision_max_paths: 25
+
+# Host patterns that are too broad for self-service.
+directory_provision_denied_host_patterns:
+  - all
+  - ungrouped
+  - localhost
+
+# If a requested directory already exists, leave its ownership and mode
+# alone (safer for self-service). Set true to enforce the requested values.
+directory_provision_modify_existing: false

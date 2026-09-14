@@ -1,0 +1,48 @@
+---
+controller_credential_types:
+  - name: ServiceNow ITSM (use cases)
+    description: Injects SN_HOST / SN_USERNAME / SN_PASSWORD for the servicenow.itsm collection
+    kind: cloud
+    inputs:
+      fields:
+        - id: instance
+          type: string
+          label: Instance URL
+        - id: username
+          type: string
+          label: Username
+        - id: password
+          type: string
+          label: Password
+          secret: true
+      required:
+        - instance
+        - username
+        - password
+    injectors:
+      env:
+        SN_HOST: !unsafe "{{ instance }}"
+        SN_USERNAME: !unsafe "{{ username }}"
+        SN_PASSWORD: !unsafe "{{ password }}"
+
+controller_credentials:
+  - name: UC2 - ServiceNow
+    description: ServiceNow instance for incident enrichment (UC2)
+    organization: "{{ uc_organization }}"
+    credential_type: ServiceNow ITSM (use cases)
+    update_secrets: false
+    inputs:
+      instance: "{{ uc_snow_instance }}"
+      username: "{{ uc_snow_username }}"
+      password: "{{ uc_snow_password }}"
+
+controller_projects:
+  - name: AAP Use Cases
+    description: Self-service directories (UC1) and storage reporting with EDA enrichment (UC2)
+    organization: "{{ uc_organization }}"
+    scm_type: git
+    scm_url: "{{ uc_scm_url }}"
+    scm_branch: "{{ uc_scm_branch }}"
+    scm_update_on_launch: true
+    update_project: true
+    wait: true

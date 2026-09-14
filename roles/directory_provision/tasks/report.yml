@@ -1,0 +1,34 @@
+---
+# Run once after the create play: summarise every host in a readable table and
+# publish the results as workflow artifacts.
+
+- name: Collect results from every targeted host
+  ansible.builtin.set_fact:
+    dp_report_rows: >-
+      {{ dp_report_rows | default([])
+         + (hostvars[item]['dp_results']
+            if hostvars[item]['dp_results'] is defined
+            else [{'host': item, 'platform': '-', 'path': '*', 'status': 'FAILED or UNREACHABLE (see job output)',
+                   'owner': '-', 'group': '-', 'mode': '-'}]) }}
+  loop: "{{ dp_report_hosts }}"
+
+- name: Format the summary table
+  ansible.builtin.set_fact:
+    dp_report_lines: "{{ dp_report_lines | default([]) + [dp_line_format | format(item.host, item.path, item.owner ~ ':' ~ item.group, item.mode, item.status)] }}"
+  loop: "{{ dp_report_rows }}"
+  loop_control:
+    label: "{{ item.host }} {{ item.path }}"
+  vars:
+    dp_line_format: "%-22s %-32s %-22s %-6s %s"
+
+- name: Directory provisioning summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['%-22s %-32s %-22s %-6s %s' | format('SERVER', 'DIRECTORY', 'OWNER:GROUP', 'MODE', 'RESULT'),
+          '-' * 110] + dp_report_lines }}
+
+- name: Publish results for downstream workflow nodes
+  ansible.builtin.set_stats:
+    data:
+      uc1_results: "{{ dp_report_rows }}"
+    per_host: false

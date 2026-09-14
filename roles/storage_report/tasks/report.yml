@@ -1,0 +1,77 @@
+---
+# Runs on localhost after collection. Builds the table, the incident work note
+# and the workflow artifacts consumed by the ServiceNow update job.
+
+- name: Collect one row per host and path
+  ansible.builtin.set_fact:
+    sr_all_rows: "{{ sr_all_rows | default([]) + [sr_host_row] }}"
+  loop: "{{ sr_hosts | product(sr_paths) | list }}"
+  loop_control:
+    label: "{{ item[0] }}:{{ item[1] }}"
+  vars:
+    sr_found: "{{ hostvars[item[0]]['sr_rows'] | default([]) | selectattr('requested_path', 'equalto', item[1]) | list }}"
+    sr_insight: "{{ hostvars[item[0]]['sr_insights'][item[1]] | default({}) }}"
+    sr_placeholder:
+      server: "{{ item[0] }}"
+      requested_path: "{{ item[1] }}"
+      state: UNREACHABLE
+      message: "Host returned no data (unreachable or failed); see job output"
+    sr_host_row: "{{ (sr_found[0] | combine({'insights': sr_insight})) if sr_found else sr_placeholder }}"
+
+- name: Add rows for hosts that are not in the inventory
+  ansible.builtin.set_fact:
+    sr_all_rows: "{{ sr_all_rows | default([]) + [{'server': item, 'requested_path': sr_requested_paths | join(', '), 'state': 'NOT IN INVENTORY', 'message': 'Alert/survey host does not match any AAP inventory host'}] }}"
+  loop: "{{ sr_unknown_hosts }}"
+
+- name: Add rows for rejected paths
+  ansible.builtin.set_fact:
+    sr_all_rows: "{{ sr_all_rows | default([]) + [{'server': '*', 'requested_path': item, 'state': 'INVALID PATH', 'message': 'Paths must be absolute with no . or .. segments'}] }}"
+  loop: "{{ sr_invalid_paths }}"
+
+- name: Format the utilization table
+  ansible.builtin.set_fact:
+    sr_table: "{{ sr_table | default([sr_header, '-' * (sr_header | length)]) + [sr_line] }}"
+  loop: "{{ sr_all_rows }}"
+  loop_control:
+    label: "{{ item.server }}:{{ item.requested_path }}"
+  vars:
+    sr_fmt: "%-20s %-22s %11s %11s %11s %6s  %s"
+    sr_header: "{{ sr_fmt | format('SERVER', 'DIRECTORY/MOUNT', 'TOTAL', 'USED', 'AVAILABLE', 'USE%', 'STATUS') }}"
+    sr_has_data: "{{ item.total_bytes is defined and item.state in ['OK', 'WARNING', 'CRITICAL'] }}"
+    sr_line: >-
+      {{ sr_fmt | format(
+           item.server,
+           (item.requested_path ~ ((' (' ~ item.mount ~ ')') if sr_has_data and item.mount != item.requested_path else '')) | truncate(22, true, '~', 0),
+           (item.total_bytes | int | human_readable) if sr_has_data else '-',
+           (item.used_bytes | int | human_readable) if sr_has_data else '-',
+           (item.avail_bytes | int | human_readable) if sr_has_data else '-',
+           (item.pct_used ~ '%') if sr_has_data else '-',
+           item.state) }}
+
+- name: Storage utilization report
+  ansible.builtin.debug:
+    msg: "{{ sr_table }}"
+
+- name: Render the incident work note
+  ansible.builtin.set_fact:
+    sr_worknote: "{{ lookup('ansible.builtin.template', 'worknote.txt.j2') }}"
+
+- name: Show the work note that will be attached to the incident
+  ansible.builtin.debug:
+    msg: "{{ sr_worknote.split('\n') }}"
+  when: sr_trigger != 'survey' or sr_incident | length > 0
+
+- name: Publish results for downstream workflow nodes
+  ansible.builtin.set_stats:
+    data:
+      uc2_trigger: "{{ sr_trigger }}"
+      uc2_alert_summary: "{{ sr_alert_summary }}"
+      uc2_incident_number: "{{ sr_incident }}"
+      uc2_lookup_hosts: "{{ sr_hosts + sr_unknown_hosts }}"
+      uc2_rows: "{{ sr_all_rows | map('dict2items') | map('rejectattr', 'key', 'equalto', 'insights') | map('items2dict') | list }}"
+      uc2_worst_state: >-
+        {{ 'CRITICAL' if sr_all_rows | selectattr('state', 'equalto', 'CRITICAL') | list
+           else ('WARNING' if sr_all_rows | selectattr('state', 'equalto', 'WARNING') | list
+           else ('OK' if sr_all_rows | selectattr('state', 'equalto', 'OK') | list else 'NO DATA')) }}
+      uc2_worknote: "{{ sr_worknote }}"
+    per_host: false

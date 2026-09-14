@@ -1,0 +1,12 @@
+---
+# UC1 step 1: fail fast on bad input before anyone is asked to approve it.
+- name: UC1 | Validate self-service directory request
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Apply the directory request guardrails
+      ansible.builtin.include_role:
+        name: directory_provision
+        tasks_from: validate.yml

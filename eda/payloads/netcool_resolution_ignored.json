@@ -1,0 +1,10 @@
+{
+  "Identifier": "node01:FileSystem:/var:FSUsagePct",
+  "Node": "node01",
+  "AlertGroup": "FileSystem",
+  "AlertKey": "/var",
+  "Summary": "File system /var is 71% used - cleared",
+  "Severity": 0,
+  "Type": 2,
+  "TTNumber": "INC0010042"
+}

@@ -1,0 +1,10 @@
+*.retry
+.vault_pass*
+*.secret.yml
+collections/ansible_collections/
+context/
+__pycache__/
+.venv/
+~$*.pptx
+node_modules/
+deck/

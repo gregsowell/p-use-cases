@@ -1,0 +1,93 @@
+---
+# UC2 enrichment: attach the storage report to a ServiceNow incident.
+#
+# snow_mode: mock  -> print exactly what would be written (no ServiceNow needed)
+# snow_mode: live  -> write a work note using the servicenow.itsm collection.
+#                     Needs a "ServiceNow ITSM" credential (SN_HOST/SN_USERNAME/SN_PASSWORD).
+#
+# Incident resolution order:
+#   1. uc2_incident_number artifact (survey answer, or Netcool TTNumber)
+#   2. live mode only: newest active incident whose CI matches an alerted host
+- name: UC2 | Update the ServiceNow incident
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    snow_mode: mock
+    snow_lookup_retries: 5
+    snow_lookup_delay: 30
+    uc2_incident_number: ""
+    uc2_trigger: survey
+
+  tasks:
+    - name: Stop when the collection step produced no report
+      ansible.builtin.meta: end_play
+      when: uc2_worknote is not defined
+
+    - name: Stop when a manual run did not ask for an incident update
+      ansible.builtin.meta: end_play
+      when:
+        - uc2_trigger == 'survey'
+        - uc2_incident_number | length == 0
+
+    - name: Mock mode - show the ServiceNow update that would be made
+      when: snow_mode != 'live'
+      block:
+        - name: Mock mode - incident update preview
+          ansible.builtin.debug:
+            msg: "{{ preview_header + uc2_worknote.split('\n') }}"
+          vars:
+            preview_header:
+              - "MOCK MODE: no ServiceNow call made. Set snow_mode=live to write this work note."
+              - >-
+                Target incident: {{ uc2_incident_number if uc2_incident_number
+                else 'lookup by CI ' ~ (uc2_lookup_hosts | default([]) | join(', ')) }}
+              - "Overall state  : {{ uc2_worst_state | default('n/a') }}"
+              - "PATCH /api/now/table/incident/<sys_id>  work_notes:"
+              - ""
+
+        - name: Mock mode - done
+          ansible.builtin.meta: end_play
+
+    - name: Look up the incident by number
+      servicenow.itsm.incident_info:
+        number: "{{ uc2_incident_number }}"
+      register: snow_by_number
+      when: uc2_incident_number | length > 0
+
+    # The monitoring integration may still be creating the incident when the
+    # alert reaches EDA, so retry for a short while.
+    - name: Find the newest active incident for the alerted host
+      servicenow.itsm.incident_info:
+        sysparm_query: "active=true^cmdb_ci.nameIN{{ uc2_lookup_hosts | join(',') }}^ORDERBYDESCopened_at"
+      register: snow_by_ci
+      until: snow_by_ci.records | length > 0
+      retries: "{{ snow_lookup_retries }}"
+      delay: "{{ snow_lookup_delay }}"
+      when: uc2_incident_number | length == 0
+
+    - name: Choose the incident to update
+      ansible.builtin.set_fact:
+        snow_incident: >-
+          {{ (snow_by_number.records | default([]) | first)
+             if uc2_incident_number | length > 0
+             else (snow_by_ci.records | default([]) | first) }}
+
+    - name: Stop when no incident was found
+      ansible.builtin.fail:
+        msg: "No ServiceNow incident found for {{ uc2_incident_number or (uc2_lookup_hosts | join(', ')) }}"
+      when: snow_incident is not mapping or snow_incident.sys_id is not defined
+
+    - name: Add the storage report as a work note
+      servicenow.itsm.api:
+        resource: incident
+        action: patch
+        sys_id: "{{ snow_incident.sys_id }}"
+        data:
+          work_notes: "{{ uc2_worknote }}"
+      register: snow_update
+
+    - name: Confirm the update
+      ansible.builtin.debug:
+        msg: "Work note added to {{ snow_incident.number }} (state {{ uc2_worst_state | default('n/a') }})"

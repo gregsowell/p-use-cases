@@ -1,0 +1,25 @@
+{
+  "ProblemID": "-4512339812736452118_1789390620000V2",
+  "PID": "P-260914",
+  "State": "OPEN",
+  "ProblemTitle": "Low disk space",
+  "ProblemSeverity": "RESOURCE_CONTENTION",
+  "ProblemImpact": "INFRASTRUCTURE",
+  "ProblemURL": "https://abc12345.live.dynatrace.com/#problems/problemdetails;pid=-4512339812736452118_1789390620000V2",
+  "Tags": "env:nonprod, app:payments, owner:unix-team",
+  "ImpactedEntityNames": "node01.lab.example.com",
+  "ImpactedEntities": [
+    { "type": "HOST", "name": "node01.lab.example.com", "entity": "HOST-8F2A1C3D4E5B6A70" }
+  ],
+  "ProblemDetailsJSON": {
+    "rankedEvents": [
+      {
+        "eventType": "LOW_DISK_SPACE",
+        "entityName": "/var",
+        "entityId": "DISK-8F2A1C3D4E5B6A70-2",
+        "severityLevel": "RESOURCE_CONTENTION",
+        "status": "OPEN"
+      }
+    ]
+  }
+}

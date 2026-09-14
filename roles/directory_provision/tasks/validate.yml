@@ -1,0 +1,86 @@
+---
+# Input validation shared by the "validate" job and the "create" job, so the
+# create job is still safe when someone launches it outside the workflow.
+# Pure data checks only: nothing here touches a managed host.
+
+- name: Validate the directory request
+  run_once: true
+  block:
+    - name: Normalize the requested hosts and directories
+      ansible.builtin.set_fact:
+        dp_hosts: >-
+          {{ (target_hosts | default('') | string)
+             | regex_replace('[\s;]+', ',')
+             | split(',') | map('trim') | reject('equalto', '') | unique | list }}
+        dp_directories: >-
+          {{ (directory_list | default('') | string)
+             | regex_replace('[\r\n;]+', ',')
+             | split(',') | map('trim') | reject('equalto', '')
+             | map('regex_replace', '/{2,}', '/')
+             | map('regex_replace', '(.)/+$', '\1')
+             | unique | list }}
+        dp_owner: "{{ dir_owner | default('') | string | trim }}"
+        dp_group: "{{ dir_group | default('') | string | trim }}"
+        dp_mode: "{{ dir_mode | default('') | string | trim }}"
+
+    - name: Build guardrail expressions
+      ansible.builtin.set_fact:
+        dp_denied_regex: >-
+          {{ ('^(' ~ (directory_provision_denied_prefixes | map('regex_escape') | join('|')) ~ ')(/|$)')
+             if directory_provision_denied_prefixes | length > 0 else '(?!)' }}
+        dp_allowed_regex: >-
+          {{ ('^(' ~ (directory_provision_allowed_prefixes | map('regex_escape') | join('|')) ~ ')(/|$)')
+             if directory_provision_allowed_prefixes | length > 0 else '^/' }}
+        dp_known_patterns: "{{ (groups.keys() | list) + groups['all'] }}"
+
+    - name: Evaluate the request against the guardrails
+      ansible.builtin.set_fact:
+        dp_bad_hosts_unknown: >-
+          {{ dp_hosts | reject('in', dp_known_patterns) | reject('search', '[*?!&:~\[\]]') | list }}
+        dp_bad_hosts_broad: >-
+          {{ dp_hosts | select('in', directory_provision_denied_host_patterns) | list
+             + dp_hosts | select('search', '[*?!&:~\[\]]') | list }}
+        dp_bad_paths_format: "{{ dp_directories | reject('match', '^/[A-Za-z0-9._@+/-]*$') | list }}"
+        dp_bad_paths_traversal: "{{ dp_directories | select('search', '(^|/)\\.{1,2}(/|$)') | list }}"
+        dp_bad_paths_protected: "{{ dp_directories | select('in', directory_provision_protected_paths) | list }}"
+        dp_bad_paths_denied: "{{ dp_directories | select('match', dp_denied_regex) | list }}"
+        dp_bad_paths_not_allowed: >-
+          {{ dp_directories | select('match', '^/') | reject('match', dp_allowed_regex) | list
+             if directory_provision_allowed_prefixes | length > 0 else [] }}
+
+    - name: Collect validation errors
+      ansible.builtin.set_fact:
+        dp_errors: "{{ dp_error_candidates | select() | list }}"
+      vars:
+        dp_error_candidates:
+          - "{{ 'No target hosts were supplied.' if dp_hosts | length == 0 else '' }}"
+          - "{{ ('Unknown hosts or groups: ' ~ (dp_bad_hosts_unknown | join(', '))) if dp_bad_hosts_unknown else '' }}"
+          - "{{ ('Host patterns too broad for self-service: ' ~ (dp_bad_hosts_broad | unique | join(', '))) if dp_bad_hosts_broad else '' }}"
+          - "{{ 'No directories were supplied.' if dp_directories | length == 0 else '' }}"
+          - "{{ ('Too many directories (' ~ dp_directories | length ~ '); limit is ' ~ directory_provision_max_paths ~ '.')
+                if dp_directories | length > directory_provision_max_paths | int else '' }}"
+          - "{{ ('Paths must be absolute and use only letters, digits, . _ - @ + /: ' ~ (dp_bad_paths_format | join(', '))) if dp_bad_paths_format else '' }}"
+          - "{{ ('Paths may not contain . or .. segments: ' ~ (dp_bad_paths_traversal | join(', '))) if dp_bad_paths_traversal else '' }}"
+          - "{{ ('Protected paths cannot be requested: ' ~ (dp_bad_paths_protected | join(', '))) if dp_bad_paths_protected else '' }}"
+          - "{{ ('Paths under system locations are not allowed: ' ~ (dp_bad_paths_denied | join(', '))) if dp_bad_paths_denied else '' }}"
+          - "{{ ('Paths are outside the allowed locations (' ~ (directory_provision_allowed_prefixes | join(', ')) ~ '): '
+                ~ (dp_bad_paths_not_allowed | join(', '))) if dp_bad_paths_not_allowed else '' }}"
+          - "{{ ('Owner \"' ~ dp_owner ~ '\" is not a valid user name.') if dp_owner is not match('^[A-Za-z_][A-Za-z0-9_.-]{0,31}$') else '' }}"
+          - "{{ ('Group \"' ~ dp_group ~ '\" is not a valid group name.') if dp_group is not match('^[A-Za-z_][A-Za-z0-9_.-]{0,31}$') else '' }}"
+          - "{{ ('Permissions \"' ~ dp_mode ~ '\" must be 3 or 4 octal digits (e.g. 0755).')
+                if dp_mode | length > 0 and dp_mode is not match('^[0-7]{3,4}$') else '' }}"
+
+    - name: Reject invalid requests
+      ansible.builtin.assert:
+        that: dp_errors | length == 0
+        fail_msg: "{{ ['Request rejected:'] + dp_errors }}"
+        success_msg: "Request passed all guardrails."
+        quiet: true
+
+    - name: Show the validated request
+      ansible.builtin.debug:
+        msg:
+          - "Targets     : {{ dp_hosts | join(', ') }}"
+          - "Directories : {{ dp_directories | join(', ') }}"
+          - "Owner:Group : {{ dp_owner }}:{{ dp_group }}"
+          - "Permissions : {{ dp_mode if dp_mode else '(platform default)' }}"

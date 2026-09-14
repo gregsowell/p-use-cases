@@ -1,0 +1,25 @@
+---
+# Execution environment for playbooks/aap_configure.yml (config as code) and live
+# ServiceNow mode. Build with ansible-builder 3.x; certified collections need an
+# Automation Hub token in ansible.cfg at build time.
+#   ansible-builder build -t <registry>/aap-use-cases-ee:1.0 -f execution-environment.yml
+version: 3
+
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-26/ee-minimal-rhel9:latest
+
+dependencies:
+  galaxy:
+    collections:
+      - name: ansible.controller
+      - name: ansible.eda
+      - name: ansible.platform
+      - name: infra.aap_configuration
+      - name: servicenow.itsm
+      - name: ibm.power_aix
+  python_interpreter:
+    package_system: python3.11
+
+options:
+  package_manager_path: /usr/bin/microdnf

@@ -1,0 +1,21 @@
+---
+# Example inventory layout. The lab uses an existing AAP inventory (uc_inventory
+# in aap_config/00_settings.yml); use this as a starting point elsewhere.
+all:
+  children:
+    rhel_servers:
+      hosts:
+        node01:
+          ansible_host: 192.0.2.11
+
+    aix_servers:
+      hosts:
+        aixnode01:
+          ansible_host: 192.0.2.31
+      vars:
+        # AIX Toolbox Python; AIX 7.3 also ships /usr/bin/python3.
+        ansible_python_interpreter: /opt/freeware/bin/python3
+        # Use su when sudo is not installed on the LPAR.
+        ansible_become_method: sudo
+        # /tmp is small on many LPARs.
+        ansible_remote_tmp: /var/tmp/.ansible-${USER}

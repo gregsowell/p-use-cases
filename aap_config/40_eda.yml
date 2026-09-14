@@ -1,0 +1,62 @@
+---
+# The EDA credential that lets activations launch controller workflows is an
+# existing object referenced by name (uc_eda_aap_credential).
+
+eda_credentials:
+  # Netcool (Message Bus gateway / Impact policy) sends X-Event-Token: <token>
+  - name: UC2 - Netcool Event Stream Token
+    description: Header token expected on Netcool alert posts
+    organization: "{{ uc_organization }}"
+    credential_type: Token Event Stream
+    inputs:
+      auth_type: token
+      token: "{{ uc_netcool_stream_token }}"
+      http_header_key: X-Event-Token
+
+  # AAP ships a Dynatrace-specific event stream type (basic auth).
+  - name: UC2 - Dynatrace Event Stream
+    description: Basic auth used by the Dynatrace problem notification webhook
+    organization: "{{ uc_organization }}"
+    credential_type: Dynatrace Event Stream
+    inputs:
+      auth_type: basic
+      username: "{{ uc_dynatrace_stream_username }}"
+      password: "{{ uc_dynatrace_stream_password }}"
+      http_header_key: Authorization
+
+eda_projects:
+  - name: AAP Use Cases
+    description: Rulebooks for the AAP use cases
+    organization: "{{ uc_organization }}"
+    url: "{{ uc_scm_url }}"
+    scm_branch: "{{ uc_scm_branch }}"
+    sync: true
+
+eda_event_streams:
+  - name: UC2 - Netcool Alerts
+    organization: "{{ uc_organization }}"
+    credential_name: UC2 - Netcool Event Stream Token
+    forward_events: true
+  - name: UC2 - Dynatrace Problems
+    organization: "{{ uc_organization }}"
+    credential_name: UC2 - Dynatrace Event Stream
+    forward_events: true
+
+# Applied in a second pass by playbooks/aap_configure.yml, after the EDA
+# project has finished importing the rulebook.
+uc_eda_rulebook_activations:
+  - name: UC2 - Storage Alert Enrichment
+    description: Netcool/Dynatrace storage alerts -> UC2 workflow -> ServiceNow work note
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    rulebook: storage_alert_enrichment.yml
+    decision_environment: "{{ uc_decision_environment }}"
+    eda_credentials:
+      - "{{ uc_eda_aap_credential }}"
+    event_streams:
+      - event_stream: UC2 - Netcool Alerts
+        source_name: netcool_alerts
+      - event_stream: UC2 - Dynatrace Problems
+        source_name: dynatrace_problems
+    restart_policy: on-failure
+    enabled: true

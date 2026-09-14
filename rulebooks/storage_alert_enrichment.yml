@@ -1,0 +1,63 @@
+---
+# UC2 future enhancement: Netcool / Dynatrace storage alert -> enriched ServiceNow incident.
+#
+# In AAP 2.6 each webhook source below is swapped for an Event Stream when the
+# rulebook activation is created, so monitoring tools post to the platform
+# gateway (TLS + credential auth) instead of an exposed activation port.
+# The rulebook only decides WHETHER to act; the playbook parses the payload.
+- name: Storage alert enrichment
+  hosts: all
+  sources:
+    - name: netcool_alerts
+      ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5000
+
+    - name: dynatrace_problems
+      ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5001
+
+  rules:
+    # OMNIbus conventions: Severity 5=Critical 4=Major 3=Minor; Type 1=Problem 2=Resolution.
+    - name: Netcool filesystem threshold alert
+      condition: >-
+        event.payload.AlertGroup == "FileSystem"
+        and event.payload.Severity >= 4
+        and event.payload.Type == 1
+      throttle:
+        once_within: 15 minutes
+        group_by_attributes:
+          - event.payload.Node
+          - event.payload.AlertKey
+      action:
+        run_workflow_template:
+          name: "UC2 - Storage Utilization Report"
+          organization: Default
+          job_args:
+            extra_vars:
+              alert_source: netcool
+
+    - name: Dynatrace low disk space problem
+      condition: >-
+        event.payload.State == "OPEN"
+        and event.payload.ProblemTitle is search("disk", ignorecase=true)
+      throttle:
+        once_within: 15 minutes
+        group_by_attributes:
+          - event.payload.ProblemID
+      action:
+        run_workflow_template:
+          name: "UC2 - Storage Utilization Report"
+          organization: Default
+          job_args:
+            extra_vars:
+              alert_source: dynatrace
+
+    # Anything else (resolutions, other alert groups) is printed and ignored,
+    # which makes the activation log a handy audit trail during the demo.
+    - name: Log events that need no action
+      condition: event.meta is defined
+      action:
+        print_event:
+          pretty: true

@@ -1,0 +1,42 @@
+---
+# UC2: storage utilization report. One playbook, two front doors:
+#   - a person fills in the AAP survey (target_hosts, report_paths)
+#   - Event-Driven Ansible launches it from a Netcool or Dynatrace alert
+- name: UC2 | Normalize the request
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Build a normalized request from the survey or the alert
+      ansible.builtin.include_role:
+        name: storage_report
+        tasks_from: normalize.yml
+
+- name: UC2 | Collect utilization from target servers
+  hosts: "{{ hostvars['localhost']['sr_hosts'] | join(',') or 'uc2_no_hosts_resolved' }}"
+  gather_facts: false
+  become: true
+  # An unreachable server becomes an UNREACHABLE row instead of failing the run.
+  ignore_unreachable: true
+
+  vars:
+    sr_paths: "{{ hostvars['localhost']['sr_paths'] }}"
+    sr_deep: "{{ hostvars['localhost']['sr_deep'] }}"
+
+  tasks:
+    - name: Collect filesystem utilization
+      ansible.builtin.include_role:
+        name: storage_report
+        tasks_from: collect.yml
+
+- name: UC2 | Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Build the table and incident work note
+      ansible.builtin.include_role:
+        name: storage_report
+        tasks_from: report.yml

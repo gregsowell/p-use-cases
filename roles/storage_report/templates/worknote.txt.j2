@@ -1,0 +1,56 @@
+[Ansible Automation Platform] Automated storage enrichment
+Trigger   : {{ sr_trigger | upper }}{{ ' via Event-Driven Ansible' if sr_launched_by_eda | bool else '' }}
+Context   : {{ sr_alert_summary | trim }}
+Collected : {{ now(utc=true, fmt='%Y-%m-%d %H:%M:%S UTC') }} by AAP job {{ awx_job_id | default(tower_job_id | default('n/a')) }}
+
+STORAGE UTILIZATION
+{% for line in sr_table %}
+{{ line }}
+{% endfor %}
+{% for row in sr_all_rows if row.insights is defined and row.insights | length > 0 %}
+
+---- {{ row.server }} : {{ row.requested_path }}  ({{ row.filesystem }} on {{ row.mount }}, {{ row.platform }}) ----
+Largest directories:
+{% for d in row.insights.top_dirs[:storage_report_top_n | int] %}
+  {{ '%10s' | format((d[0] | int * 1024) | human_readable) }}  {{ d[1] }}
+{% else %}
+  (none found or scan not permitted)
+{% endfor %}
+Large files (> {{ storage_report_large_file_mb }} MB) modified in the last {{ storage_report_recent_days }} days:
+{% for f in row.insights.large_files[:storage_report_top_n | int] %}
+  {{ '%10s' | format(f[0] | int | human_readable) }}  {{ f[1] }}
+{% else %}
+  (none)
+{% endfor %}
+{% if row.insights.scan_timed_out | bool %}
+  NOTE: a scan exceeded {{ storage_report_scan_timeout }}s; results above may be partial.
+{% endif %}
+{# Size the fix to land 5 points below the warning threshold, in whole MB. #}
+{% set goal = (storage_report_warn_pct | int) - 5 %}
+{% set need_mb = (((row.used_bytes | int) * 100 / goal - (row.total_bytes | int)) / 1048576) | round(0, 'ceil') | int %}
+{% if row.state in ['WARNING', 'CRITICAL'] and need_mb > 0 %}
+Space needed to get back to {{ goal }}%: {{ (need_mb * 1048576) | human_readable }}
+{% if row.insights.vg_free_bytes | int >= 0 %}
+Volume group {{ row.insights.vg_name }} free space: {{ row.insights.vg_free_bytes | int | human_readable }}
+{% if row.insights.vg_free_bytes | int >= need_mb * 1048576 %}
+Suggested action: extend online (requires change approval), e.g.
+{% if row.platform == 'AIX' %}
+  chfs -a size=+{{ need_mb }}M {{ row.mount }}
+{% else %}
+  lvextend -r -L +{{ need_mb }}M {{ row.filesystem }}
+{% endif %}
+{% else %}
+Suggested action: volume group lacks free space; clean up the consumers above or engage the storage team.
+{% endif %}
+{% else %}
+Suggested action: clean up the consumers above; volume group headroom could not be determined.
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if sr_all_rows | selectattr('state', 'in', ['UNREACHABLE', 'NOT IN INVENTORY', 'INVALID PATH', 'NOT FOUND', 'ERROR']) | list %}
+
+Items needing attention:
+{% for row in sr_all_rows if row.state in ['UNREACHABLE', 'NOT IN INVENTORY', 'INVALID PATH', 'NOT FOUND', 'ERROR'] %}
+  {{ row.server }} {{ row.requested_path }}: {{ row.state }} - {{ row.message | default('') }}
+{% endfor %}
+{% endif %}

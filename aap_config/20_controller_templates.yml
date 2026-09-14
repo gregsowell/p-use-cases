@@ -1,0 +1,51 @@
+---
+controller_templates:
+  # --- UC1: self-service directory provisioning -----------------------------
+  - name: UC1 - Validate Directory Request
+    description: Guardrail checks on a directory request (runs before approval)
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/uc1_validate_request.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    ask_variables_on_launch: true
+    allow_simultaneous: true
+
+  - name: UC1 - Create Directories
+    description: Creates directories with the requested owner/group/mode on RHEL or AIX
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/uc1_create_directories.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    credentials:
+      - "{{ uc_machine_credential }}"
+    ask_variables_on_launch: true
+    allow_simultaneous: true
+
+  # --- UC2: storage utilization reporting + incident enrichment -------------
+  - name: UC2 - Collect Storage Utilization
+    description: Read-only filesystem utilization (and optional deep dive) for hosts/paths from a survey or alert
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/uc2_storage_report.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    credentials:
+      - "{{ uc_machine_credential }}"
+    ask_variables_on_launch: true
+    allow_simultaneous: true
+
+  - name: UC2 - Update ServiceNow Incident
+    description: Adds the storage report to the related ServiceNow incident as a work note
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/uc2_update_incident.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    credentials:
+      - UC2 - ServiceNow
+    extra_vars:
+      snow_mode: "{{ uc_snow_mode }}"
+    ask_variables_on_launch: true
+    allow_simultaneous: true

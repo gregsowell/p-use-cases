@@ -1,0 +1,146 @@
+---
+controller_workflows:
+  # ---------------------------------------------------------------------------
+  # UC1: survey -> validate -> approval -> create
+  # ---------------------------------------------------------------------------
+  - name: UC1 - Self-Service Directory Provisioning
+    description: Create one or more directories/mount points with owner, group and optional permissions on RHEL or AIX
+    organization: "{{ uc_organization }}"
+    inventory: "{{ uc_inventory }}"
+    allow_simultaneous: true
+    ask_variables_on_launch: false
+    survey_enabled: true
+    survey_spec:
+      name: Directory request
+      description: Self-service directory and mount point creation
+      spec:
+        - question_name: Target servers
+          question_description: Inventory hosts or groups, comma-separated (e.g. node01, web_servers)
+          variable: target_hosts
+          type: text
+          required: true
+          min: 1
+          max: 1024
+          default: ""
+        - question_name: Directories / mount points
+          question_description: Absolute paths, comma-separated or one per line (e.g. /app/data, /app/logs)
+          variable: directory_list
+          type: textarea
+          required: true
+          min: 1
+          max: 4096
+          default: ""
+        - question_name: Owner
+          question_description: Existing user that will own the directories
+          variable: dir_owner
+          type: text
+          required: true
+          min: 1
+          max: 32
+          default: ""
+        - question_name: Group
+          question_description: Existing group for the directories
+          variable: dir_group
+          type: text
+          required: true
+          min: 1
+          max: 32
+          default: ""
+        - question_name: Permissions (optional)
+          question_description: Octal mode such as 0755 or 2775. Leave blank for the platform default.
+          variable: dir_mode
+          type: text
+          required: false
+          min: 0
+          max: 4
+          default: ""
+    workflow_nodes:
+      - identifier: uc1-validate
+        unified_job_template:
+          name: UC1 - Validate Directory Request
+          type: job_template
+          organization:
+            name: "{{ uc_organization }}"
+        related:
+          success_nodes:
+            - identifier: uc1-approve
+      - identifier: uc1-approve
+        approval_node:
+          name: Approve directory request
+          description: Review the validated request in the previous job's output, then approve or deny.
+          timeout: 3600
+        related:
+          success_nodes:
+            - identifier: uc1-create
+      - identifier: uc1-create
+        unified_job_template:
+          name: UC1 - Create Directories
+          type: job_template
+          organization:
+            name: "{{ uc_organization }}"
+
+  # ---------------------------------------------------------------------------
+  # UC2: collect -> (always) update incident
+  # Launched by people through the survey, or by EDA with alert extra vars.
+  # ---------------------------------------------------------------------------
+  - name: UC2 - Storage Utilization Report
+    description: Storage utilization table for a directory/mount across servers, optionally attached to a ServiceNow incident
+    organization: "{{ uc_organization }}"
+    inventory: "{{ uc_inventory }}"
+    allow_simultaneous: true
+    # Required so Event-Driven Ansible can pass alert_source and ansible_eda.
+    ask_variables_on_launch: true
+    survey_enabled: true
+    survey_spec:
+      name: Storage utilization report
+      description: Check utilization of a directory or mount point across servers
+      spec:
+        - question_name: Target servers
+          question_description: Inventory hosts or groups, comma-separated
+          variable: target_hosts
+          type: text
+          required: true
+          min: 1
+          max: 1024
+          default: "{{ uc_uc2_default_targets }}"
+        - question_name: Directory or mount point
+          question_description: One or more absolute paths, comma-separated (e.g. /var, /u01)
+          variable: report_paths
+          type: text
+          required: true
+          min: 1
+          max: 1024
+          default: "{{ uc_uc2_default_paths }}"
+        - question_name: ServiceNow incident (optional)
+          question_description: If supplied, the report is added to this incident as a work note
+          variable: snow_incident_number
+          type: text
+          required: false
+          min: 0
+          max: 40
+          default: ""
+        - question_name: Include troubleshooting detail?
+          question_description: Adds largest directories, recent large files and volume group headroom
+          variable: sr_deep_dive
+          type: multiplechoice
+          required: true
+          choices:
+            - "no"
+            - "yes"
+          default: "no"
+    workflow_nodes:
+      - identifier: uc2-collect
+        unified_job_template:
+          name: UC2 - Collect Storage Utilization
+          type: job_template
+          organization:
+            name: "{{ uc_organization }}"
+        related:
+          always_nodes:
+            - identifier: uc2-update-incident
+      - identifier: uc2-update-incident
+        unified_job_template:
+          name: UC2 - Update ServiceNow Incident
+          type: job_template
+          organization:
+            name: "{{ uc_organization }}"

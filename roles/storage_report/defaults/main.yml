@@ -1,0 +1,25 @@
+---
+# ---------------------------------------------------------------------------
+# Request inputs for manual runs (AAP survey). Ignored when the run is started
+# by Event-Driven Ansible: the alert payload decides the host and path instead.
+# ---------------------------------------------------------------------------
+target_hosts: aix_servers          # hosts and/or groups, comma-separated
+report_paths: /var                 # directories or mount points, comma-separated
+snow_incident_number: ""           # optional: attach the report to this incident
+sr_deep_dive: "no"                 # "yes" adds top consumers, large files, VG headroom
+
+# ---------------------------------------------------------------------------
+# Alert inputs (set by the rulebook, or pass manually to rehearse an alert)
+# ---------------------------------------------------------------------------
+alert_source: ""                   # netcool | dynatrace
+alert_payload: {}                  # used only when not launched by EDA
+
+# ---------------------------------------------------------------------------
+# Tuning
+# ---------------------------------------------------------------------------
+storage_report_warn_pct: 80
+storage_report_crit_pct: 90
+storage_report_top_n: 10
+storage_report_large_file_mb: 100
+storage_report_recent_days: 2
+storage_report_scan_timeout: 180   # seconds allowed for each du/find scan

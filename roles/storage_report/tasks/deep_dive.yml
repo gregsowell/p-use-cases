@@ -1,0 +1,95 @@
+---
+# The "no manual investigation" part: answers the responder's first three
+# questions (what is using the space, what grew recently, can we extend it).
+# All commands are read-only and bounded by a timeout.
+
+- name: Select the rows worth investigating
+  ansible.builtin.set_fact:
+    sr_scan_rows: "{{ sr_rows | selectattr('state', 'in', ['OK', 'WARNING', 'CRITICAL']) | list }}"
+
+- name: Find the largest directories beneath each path
+  ansible.builtin.shell: >-
+    du -skx {{ item.requested_path | quote }}/* {{ item.requested_path | quote }}/.[!.]* 2>/dev/null
+    | sort -rn | head -n {{ storage_report_top_n | int }}
+  loop: "{{ sr_scan_rows }}"
+  loop_control:
+    label: "{{ item.requested_path }}"
+  register: sr_du
+  changed_when: false
+  failed_when: false
+  ignore_errors: true  # a scan that hits the timeout must not fail the report
+  check_mode: false
+  timeout: "{{ storage_report_scan_timeout | int }}"
+
+# -size is counted in 512-byte blocks for portability between GNU and AIX find.
+- name: Find large files modified recently
+  ansible.builtin.shell: >-
+    find {{ item.requested_path | quote }} -xdev -type f
+    -size +{{ (storage_report_large_file_mb | int) * 2048 }}
+    -mtime -{{ storage_report_recent_days | int }}
+    -exec ls -ld {} \; 2>/dev/null
+    | sort -k5,5nr | head -n {{ storage_report_top_n | int }}
+  loop: "{{ sr_scan_rows }}"
+  loop_control:
+    label: "{{ item.requested_path }}"
+  register: sr_find
+  changed_when: false
+  failed_when: false
+  ignore_errors: true  # a scan that hits the timeout must not fail the report
+  check_mode: false
+  timeout: "{{ storage_report_scan_timeout | int }}"
+
+# Prints "<volume group> <free MB>" when the filesystem sits on LVM (RHEL)
+# or on a logical volume in an AIX volume group.
+- name: Check volume group headroom (RHEL)
+  ansible.builtin.shell: >-
+    lvs --noheadings --nosuffix --units m -o vg_name,vg_free {{ item.filesystem | quote }} 2>/dev/null | head -n 1
+  loop: "{{ sr_scan_rows }}"
+  loop_control:
+    label: "{{ item.filesystem }}"
+  register: sr_vg_linux
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['system'] == 'Linux'
+    - item.filesystem is match('^/dev/')
+
+# AIX commands below are written from AIX 7.x documentation and have not been
+# run against an AIX LPAR in this lab. Validate on a nonprod AIX host first.
+- name: Check volume group headroom (AIX)
+  ansible.builtin.shell: |
+    lv=$(basename {{ item.filesystem | quote }})
+    vg=$(lslv "$lv" 2>/dev/null | sed -n 's/.*VOLUME GROUP:[[:space:]]*\([^[:space:]]*\).*/\1/p')
+    [ -n "$vg" ] && lsvg "$vg" 2>/dev/null | sed -n "s/.*FREE PPs:[^(]*(\([0-9]*\) megabytes).*/$vg \1/p"
+  loop: "{{ sr_scan_rows }}"
+  loop_control:
+    label: "{{ item.filesystem }}"
+  register: sr_vg_aix
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['system'] == 'AIX'
+    - item.filesystem is match('^/dev/')
+
+- name: Attach the findings to each row
+  ansible.builtin.set_fact:
+    sr_insights: "{{ sr_insights | default({}) | combine({item.requested_path: sr_detail}) }}"
+  loop: "{{ sr_scan_rows }}"
+  loop_control:
+    index_var: sr_i
+    label: "{{ item.requested_path }}"
+  vars:
+    sr_vg_result: "{{ sr_vg_aix.results[sr_i] if ansible_facts['system'] == 'AIX' else sr_vg_linux.results[sr_i] }}"
+    sr_vg_fields: "{{ (sr_vg_result.stdout | default('') | trim).split() }}"
+    sr_detail:
+      top_dirs: >-
+        {{ sr_du.results[sr_i].stdout_lines | default([])
+           | map('regex_search', '^([0-9]+)\s+(.*)$', '\1', '\2') | select() | list }}
+      large_files: >-
+        {{ sr_find.results[sr_i].stdout_lines | default([])
+           | map('regex_search', '^\S+\s+\S+\s+\S+\s+\S+\s+([0-9]+)\s+\S+\s+\S+\s+\S+\s+(.*)$', '\1', '\2') | select() | list }}
+      vg_name: "{{ sr_vg_fields[0] if sr_vg_fields | length >= 2 else '' }}"
+      vg_free_bytes: "{{ ((sr_vg_fields[1] | float) * 1048576) | int if sr_vg_fields | length >= 2 else -1 }}"
+      scan_timed_out: "{{ (sr_du.results[sr_i].msg | default('')) is search('timed out|time frame') or (sr_find.results[sr_i].msg | default('')) is search('timed out|time frame') }}"

@@ -1,0 +1,83 @@
+---
+# Config as code: creates or updates every AAP object for the use cases from
+# the files in aap_config/.
+#
+# Requirements: an execution environment containing infra.aap_configuration,
+# ansible.platform, ansible.controller and ansible.eda (see execution-environment/),
+# plus a "Red Hat Ansible Automation Platform" credential on the job template.
+# From a workstation, export AAP_HOSTNAME and AAP_TOKEN (or AAP_USERNAME/AAP_PASSWORD).
+- name: Configure Ansible Automation Platform for the use cases
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    aap_hostname: >-
+      {{ (lookup('ansible.builtin.env', 'AAP_HOSTNAME') or lookup('ansible.builtin.env', 'CONTROLLER_HOST'))
+         | regex_replace('/+$', '') | regex_replace('/api/controller$', '')
+         | regex_replace('^(?!https?://)', 'https://') }}
+    aap_username: "{{ lookup('ansible.builtin.env', 'AAP_USERNAME') or lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') }}"
+    aap_password: "{{ lookup('ansible.builtin.env', 'AAP_PASSWORD') or lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') }}"
+    aap_token: "{{ lookup('ansible.builtin.env', 'AAP_TOKEN') or lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') }}"
+    aap_validate_certs: >-
+      {{ (lookup('ansible.builtin.env', 'AAP_VALIDATE_CERTS') or lookup('ansible.builtin.env', 'CONTROLLER_VERIFY_SSL') or 'true') | bool }}
+    eda_project_import_retries: 30
+
+  pre_tasks:
+    - name: Load the AAP object definitions
+      ansible.builtin.include_vars:
+        dir: "{{ playbook_dir }}/../aap_config"
+        extensions:
+          - yml
+
+    - name: Check required settings
+      ansible.builtin.assert:
+        that:
+          - aap_hostname | length > 8
+          - aap_token | length > 0 or aap_username | length > 0
+          - uc_scm_url | length > 0
+        fail_msg: >-
+          Missing connection settings. Attach a "Red Hat Ansible Automation Platform" credential
+          or export AAP_HOSTNAME with AAP_TOKEN (or AAP_USERNAME/AAP_PASSWORD).
+        quiet: true
+
+    # The collection roles prefer a token when one is defined, even if empty.
+    - name: Drop empty authentication settings
+      ansible.builtin.set_fact:
+        aap_token: "{{ omit if aap_token | length == 0 else aap_token }}"
+        aap_username: "{{ omit if aap_username | length == 0 else aap_username }}"
+        aap_password: "{{ omit if aap_password | length == 0 else aap_password }}"
+
+  tasks:
+    - name: Apply controller objects, EDA credentials, project and event streams
+      ansible.builtin.include_role:
+        name: infra.aap_configuration.dispatch
+
+    # A rulebook activation can only be created once the EDA project has
+    # finished importing its rulebooks.
+    - name: Wait for the EDA project import to finish
+      ansible.eda.project_info:
+        name: AAP Use Cases
+        controller_host: "{{ aap_hostname }}"
+        controller_username: "{{ aap_username | default(omit) }}"
+        controller_password: "{{ aap_password | default(omit) }}"
+        controller_token: "{{ aap_token | default(omit) }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      register: eda_project
+      until:
+        - eda_project.projects | default([]) | length > 0
+        - eda_project.projects[0].import_state | default('') in ['completed', 'failed']
+      retries: "{{ eda_project_import_retries }}"
+      delay: 10
+
+    - name: Stop if the EDA project import failed
+      ansible.builtin.assert:
+        that: eda_project.projects[0].import_state == 'completed'
+        fail_msg: "EDA project import failed: {{ eda_project.projects[0].import_error | default('see the EDA project page') }}"
+        quiet: true
+
+    - name: Apply the rulebook activation
+      ansible.builtin.include_role:
+        name: infra.aap_configuration.eda_rulebook_activations
+      vars:
+        eda_rulebook_activations: "{{ uc_eda_rulebook_activations }}"

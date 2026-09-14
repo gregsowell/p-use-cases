@@ -1,0 +1,108 @@
+---
+# Create one or more directories with the requested ownership on RHEL or AIX.
+
+- name: Validate the request
+  ansible.builtin.include_tasks: validate.yml
+  when: not (dp_skip_validation | default(false) | bool)
+
+- name: Gather minimal platform facts
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+
+- name: Confirm the platform is supported
+  ansible.builtin.assert:
+    that: ansible_facts['system'] in ['Linux', 'AIX']
+    fail_msg: "Unsupported platform {{ ansible_facts['system'] }}; only RHEL (Linux) and AIX are supported."
+    quiet: true
+
+# getent does not exist on AIX; lsuser/lsgroup are the native equivalents.
+- name: Look up the requested owner
+  ansible.builtin.command:
+    argv: "{{ ['lsuser', '-a', 'id', dp_owner] if ansible_facts['system'] == 'AIX' else ['getent', 'passwd', dp_owner] }}"
+  register: dp_owner_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Look up the requested group
+  ansible.builtin.command:
+    argv: "{{ ['lsgroup', '-a', 'id', dp_group] if ansible_facts['system'] == 'AIX' else ['getent', 'group', dp_group] }}"
+  register: dp_group_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Stop if the owner or group does not exist on this host
+  ansible.builtin.assert:
+    that:
+      - dp_owner_lookup.rc == 0
+      - dp_group_lookup.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }}:
+      {{ ('user ' ~ dp_owner ~ ' not found; ') if dp_owner_lookup.rc != 0 else '' }}
+      {{ ('group ' ~ dp_group ~ ' not found') if dp_group_lookup.rc != 0 else '' }}
+    quiet: true
+
+- name: Check whether each path already exists
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: "{{ dp_directories }}"
+  register: dp_before
+
+- name: Classify each requested path
+  ansible.builtin.set_fact:
+    dp_conflicts: "{{ dp_before.results | selectattr('stat.exists') | rejectattr('stat.isdir') | map(attribute='item') | list }}"
+    dp_existing: "{{ dp_before.results | selectattr('stat.exists') | selectattr('stat.isdir') | map(attribute='item') | list }}"
+    dp_missing: "{{ dp_before.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+
+# Parent directories that do not exist are created with default ownership
+# (root) and mode; the requested owner/group/mode apply to the leaf path.
+- name: Create the requested directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_group }}"
+    mode: "{{ dp_mode if dp_mode | length > 0 else omit }}"
+  loop: "{{ dp_missing + (dp_existing if directory_provision_modify_existing | bool else []) }}"
+  register: dp_create
+
+- name: Read back the final state
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: "{{ dp_directories }}"
+  register: dp_after
+
+- name: Record the outcome for each path
+  ansible.builtin.set_fact:
+    dp_results: "{{ dp_results | default([]) + [dp_row] }}"
+  loop: "{{ dp_after.results }}"
+  loop_control:
+    loop_var: dp_item
+    label: "{{ dp_item.item }}"
+  vars:
+    dp_status: >-
+      {{ 'CONFLICT: exists and is not a directory' if dp_item.item in dp_conflicts
+         else ('EXISTS: left unchanged' if dp_item.item in dp_existing and not directory_provision_modify_existing | bool
+         else ('UPDATED' if dp_item.item in dp_existing
+         else ('WOULD CREATE (check mode)' if ansible_check_mode else 'CREATED'))) }}
+    dp_row:
+      host: "{{ inventory_hostname }}"
+      platform: "{{ ansible_facts['system'] }}"
+      path: "{{ dp_item.item }}"
+      status: "{{ dp_status }}"
+      owner: "{{ dp_item.stat.pw_name | default('-') }}"
+      group: "{{ dp_item.stat.gr_name | default('-') }}"
+      mode: "{{ dp_item.stat.mode | default('-') }}"
+
+- name: Fail the host when any path conflicts with an existing file
+  ansible.builtin.fail:
+    msg: "These paths exist but are not directories: {{ dp_conflicts | join(', ') }}"
+  when: dp_conflicts | length > 0

@@ -1,0 +1,104 @@
+---
+# Runs on localhost. Turns either a survey request or a monitoring alert into
+# the same normalized request: hosts, paths, incident number.
+
+- name: Work out how this run was triggered
+  ansible.builtin.set_fact:
+    sr_payload: >-
+      {{ ansible_eda.event.payload
+         if (ansible_eda is defined and ansible_eda.event is defined)
+         else (alert_payload | default({}, true)) }}
+    sr_launched_by_eda: "{{ ansible_eda is defined and ansible_eda.event is defined }}"
+
+- name: Set the trigger type
+  ansible.builtin.set_fact:
+    sr_trigger: "{{ alert_source | lower if (sr_payload | length > 0 and alert_source | length > 0) else 'survey' }}"
+
+- name: Map a Netcool/OMNIbus alert to a storage request
+  when: sr_trigger == 'netcool'
+  ansible.builtin.set_fact:
+    sr_requested_targets: "{{ [sr_payload.Node | default('')] | reject('equalto', '') | list }}"
+    sr_requested_paths: "{{ [sr_payload.AlertKey | default('')] | reject('equalto', '') | list }}"
+    sr_incident: "{{ sr_payload.TTNumber | default('') | string | trim }}"
+    sr_alert_summary: >-
+      Netcool alert on {{ sr_payload.Node | default('?') }}: {{ sr_payload.Summary | default('filesystem threshold') }}
+      (Severity {{ sr_payload.Severity | default('?') }}, Identifier {{ sr_payload.Identifier | default('n/a') }})
+
+- name: Map a Dynatrace problem notification to a storage request
+  when: sr_trigger == 'dynatrace'
+  ansible.builtin.set_fact:
+    sr_requested_targets: >-
+      {{ (sr_payload.ImpactedEntities | default([]) | selectattr('type', 'defined')
+          | selectattr('type', 'equalto', 'HOST') | map(attribute='name') | list)
+         or (sr_payload.ImpactedEntityNames | default('') | string | split(',') | map('trim') | reject('equalto', '') | list) }}
+    sr_requested_paths: >-
+      {{ (sr_payload.ProblemDetailsJSON.rankedEvents | default([])
+          | map(attribute='entityName', default='') | select('match', '^/') | unique | list)
+         or (sr_payload.ProblemTitle | default('') | regex_findall('(/[A-Za-z0-9._/-]*)') | unique | list) }}
+    sr_incident: "{{ sr_payload.ServiceNowIncident | default('') | string | trim }}"
+    sr_alert_summary: >-
+      Dynatrace problem {{ sr_payload.PID | default(sr_payload.ProblemID | default('?')) }}:
+      {{ sr_payload.ProblemTitle | default('disk problem') }} ({{ sr_payload.ProblemSeverity | default('?') }})
+      {{ sr_payload.ProblemURL | default('') }}
+
+- name: Use the survey answers
+  when: sr_trigger == 'survey'
+  ansible.builtin.set_fact:
+    sr_requested_targets: >-
+      {{ target_hosts | default('') | string | regex_replace('[\s;]+', ',')
+         | split(',') | reject('equalto', '') | unique | list }}
+    sr_requested_paths: >-
+      {{ report_paths | default('') | string | regex_replace('[\r\n;]+', ',')
+         | split(',') | map('trim') | reject('equalto', '') | unique | list }}
+    sr_incident: "{{ snow_incident_number | default('') | string | trim }}"
+    sr_alert_summary: "Manual storage utilization report requested from the AAP survey"
+
+- name: Stop when the request does not name a host or a path
+  ansible.builtin.assert:
+    that:
+      - sr_requested_targets | length > 0
+      - sr_requested_paths | length > 0
+    fail_msg: >-
+      Could not determine {{ 'a target host' if sr_requested_targets | length == 0 else 'a directory or mount point' }}
+      from the {{ sr_trigger }} request. Payload: {{ sr_payload | to_json if sr_payload else 'n/a' }}
+    quiet: true
+
+# Monitoring tools often report FQDNs or IPs; AAP inventories often use short
+# names. Try exact name, group name, short name, then ansible_host.
+- name: Resolve requested targets against the inventory
+  ansible.builtin.set_fact:
+    sr_resolved_hosts: "{{ sr_resolved_hosts | default([]) + sr_match }}"
+    sr_unknown_hosts: "{{ sr_unknown_hosts | default([]) + ([] if sr_match else [item]) }}"
+  loop: "{{ sr_requested_targets }}"
+  vars:
+    sr_short: "{{ item if item is match('^[0-9.]+$') else item | regex_replace('\\..*$', '') }}"
+    sr_by_address: >-
+      {{ groups['all'] | map('extract', hostvars) | selectattr('ansible_host', 'defined')
+         | selectattr('ansible_host', 'equalto', item) | map(attribute='inventory_hostname') | list }}
+    sr_match: >-
+      {{ groups[item] if item in groups
+         else ([item] if item in groups['all']
+         else ([sr_short] if sr_short in groups['all']
+         else sr_by_address)) }}
+
+- name: Split valid and invalid paths
+  ansible.builtin.set_fact:
+    sr_paths: "{{ sr_requested_paths | select('match', '^/[A-Za-z0-9._@+/-]*$') | reject('search', '(^|/)\\.{1,2}(/|$)') | list }}"
+    sr_invalid_paths: >-
+      {{ sr_requested_paths | reject('match', '^/[A-Za-z0-9._@+/-]*$') | list
+         + sr_requested_paths | select('search', '(^|/)\.{1,2}(/|$)') | list }}
+    sr_hosts: "{{ sr_resolved_hosts | default([]) | unique | list }}"
+    sr_unknown_hosts: "{{ sr_unknown_hosts | default([]) | unique | list }}"
+    sr_deep: "{{ sr_trigger != 'survey' or (sr_deep_dive | string | lower) in ['yes', 'true', '1'] }}"
+
+- name: Show the normalized request
+  ansible.builtin.debug:
+    msg:
+      - "Trigger          : {{ sr_trigger }}"
+      - "Summary          : {{ sr_alert_summary }}"
+      - "Hosts            : {{ sr_hosts | join(', ') if sr_hosts else '(none resolved)' }}"
+      - "Unknown hosts    : {{ sr_unknown_hosts | join(', ') if sr_unknown_hosts else '-' }}"
+      - "Paths            : {{ sr_paths | join(', ') if sr_paths else '(none valid)' }}"
+      - "Invalid paths    : {{ sr_invalid_paths | join(', ') if sr_invalid_paths else '-' }}"
+      - "Incident         : {{ sr_incident if sr_incident else '(none supplied)' }}"
+      - "Deep dive        : {{ sr_deep }}"
