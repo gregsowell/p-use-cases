@@ -63,7 +63,8 @@ Target length is **about 25 minutes**. The lab target host is `node01`.
 | Activation creation fails: rulebook not found | The EDA project has not finished importing. Re-run config as code, or sync the EDA project. |
 | Event stream returns 401/403 | Wrong secret. Netcool uses header `X-Event-Token`; Dynatrace uses basic auth. |
 | Event accepted but no job launches | Check the activation is Running and *Forward events* is on. Check History for the matched rule, and confirm the EDA controller credential is valid. |
-| EDA-launched workflow ignores alert variables | The UC2 workflow must keep **Prompt on launch: variables** enabled. |
+| Activation log: `variables_needed_to_start` | API launches must answer required survey questions; the rulebook passes placeholders. Keep **Prompt on launch: variables** enabled on the UC2 workflow. |
+| Rulebook edits have no effect | Activations keep the rulebook they were created with. Delete the activation and re-run config as code. |
 | UC2 row `UNREACHABLE` | SSH or credential problem for that host; the collect job output shows the connection error. |
 | UC1 `user X not found` | Owner and group must already exist on every target host. |
 | Dynatrace alert: "Could not determine a directory" | Include `{ProblemDetailsJSON}` in the webhook template (`eda/payloads/dynatrace_webhook_template.json`). |

@@ -37,6 +37,11 @@
           job_args:
             extra_vars:
               alert_source: netcool
+              # Required survey answers must be supplied on API launches; the
+              # playbook takes the real host and path from the alert payload.
+              target_hosts: "(from alert)"
+              report_paths: "(from alert)"
+              sr_deep_dive: "yes"
 
     - name: Dynatrace low disk space problem
       condition: >-
@@ -53,6 +58,11 @@
           job_args:
             extra_vars:
               alert_source: dynatrace
+              # Required survey answers must be supplied on API launches; the
+              # playbook takes the real host and path from the alert payload.
+              target_hosts: "(from alert)"
+              report_paths: "(from alert)"
+              sr_deep_dive: "yes"
 
     # Anything else (resolutions, other alert groups) is printed and ignored,
     # which makes the activation log a handy audit trail during the demo.
