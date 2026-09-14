@@ -17,7 +17,7 @@ uc_scm_branch: main
 uc_inventory: generic-lab                        # must contain the target hosts
 uc_machine_credential: generic-lab-root         # SSH user with root/sudo on targets
 uc_execution_environment: "Default execution environment"
-uc_decision_environment: "Default Decision Environment"
+uc_decision_environment: "Hub Default Decision Environment"
 uc_eda_aap_credential: Controller               # EDA credential of type "Red Hat Ansible Automation Platform"
 
 # UC2 survey defaults
