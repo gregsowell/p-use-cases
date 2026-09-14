@@ -30,7 +30,8 @@ eda_projects:
     organization: "{{ uc_organization }}"
     url: "{{ uc_scm_url }}"
     scm_branch: "{{ uc_scm_branch }}"
-    sync: true
+    # Synced explicitly by playbooks/aap_configure.yml (tolerates a sync already running).
+    sync: false
 
 eda_event_streams:
   - name: UC2 - Netcool Alerts

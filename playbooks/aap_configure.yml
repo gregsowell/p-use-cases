@@ -44,6 +44,10 @@
     # The collection roles prefer a token when one is defined, even if empty.
     - name: Drop empty authentication settings
       ansible.builtin.set_fact:
+        uc_use_token: "{{ aap_token | length > 0 }}"
+        uc_api_token: "{{ aap_token }}"
+        uc_api_username: "{{ aap_username }}"
+        uc_api_password: "{{ aap_password }}"
         aap_token: "{{ omit if aap_token | length == 0 else aap_token }}"
         aap_username: "{{ omit if aap_username | length == 0 else aap_username }}"
         aap_password: "{{ omit if aap_password | length == 0 else aap_password }}"
@@ -53,27 +57,52 @@
       ansible.builtin.include_role:
         name: infra.aap_configuration.dispatch
 
-    # A rulebook activation can only be created once the EDA project has
-    # finished importing its rulebooks.
+    # Pull the latest rulebooks, then wait: an activation can only be created
+    # once the EDA project has finished importing.
+    - name: Find the EDA project
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/eda/v1/projects/?name={{ 'AAP Use Cases' | urlencode }}"
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      register: eda_project_lookup
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
+
+    - name: Sync the EDA project (a sync already in progress is fine)
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/sync/"
+        method: POST
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [200, 201, 202, 409]
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
+
     - name: Wait for the EDA project import to finish
-      ansible.eda.project_info:
-        name: AAP Use Cases
-        controller_host: "{{ aap_hostname }}"
-        controller_username: "{{ aap_username | default(omit) }}"
-        controller_password: "{{ aap_password | default(omit) }}"
-        controller_token: "{{ aap_token | default(omit) }}"
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/eda/v1/projects/{{ eda_project_lookup.json.results[0].id }}/"
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
         validate_certs: "{{ aap_validate_certs }}"
       register: eda_project
-      until:
-        - eda_project.projects | default([]) | length > 0
-        - eda_project.projects[0].import_state | default('') in ['completed', 'failed']
+      until: eda_project.json.import_state | default('') in ['completed', 'failed']
       retries: "{{ eda_project_import_retries }}"
       delay: 10
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
 
     - name: Stop if the EDA project import failed
       ansible.builtin.assert:
-        that: eda_project.projects[0].import_state == 'completed'
-        fail_msg: "EDA project import failed: {{ eda_project.projects[0].import_error | default('see the EDA project page') }}"
+        that: eda_project.json.import_state == 'completed'
+        fail_msg: "EDA project import failed: {{ eda_project.json.import_error | default('see the EDA project page') }}"
         quiet: true
 
     - name: Apply the rulebook activation
