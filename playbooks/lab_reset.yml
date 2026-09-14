@@ -1,0 +1,171 @@
+---
+# Lab reset: returns the demo environment to a known starting point.
+#
+#   1. Removes directories created by UC1 demos (only the demo locations below)
+#   2. Re-stages a large, recently modified file so the UC2 deep dive has
+#      something to find
+#   3. Denies UC1 approvals left pending from earlier runs
+#   4. Restarts the EDA activation, which clears its 15-minute throttle windows
+#
+# Steps 3 and 4 need a "Red Hat Ansible Automation Platform" credential on the
+# job template; without one they are skipped.
+
+- name: Lab reset | Clean demo artifacts on target hosts
+  hosts: "{{ target_hosts | default('node01') | regex_replace('[\\s;]+', ',') }}"
+  gather_facts: false
+  become: true
+
+  vars:
+    # Removed recursively. Anything outside the allowed pattern is refused.
+    lab_reset_paths:
+      - /app/demo
+      - /tmp/uc-demo
+    lab_reset_allowed_pattern: '^/(app/demo|tmp/uc-demo)(/|$)'
+    # Removed only if empty (they were created as parents of the demo paths).
+    lab_reset_empty_parents:
+      - /app
+    lab_reset_bigfile: /tmp/uc-demo-bigfile
+    lab_reset_bigfile_mb: 2048
+    stage_bigfile: "yes"
+
+  tasks:
+    - name: Refuse to remove anything outside the demo locations
+      ansible.builtin.assert:
+        that:
+          - lab_reset_paths | reject('match', lab_reset_allowed_pattern) | list | length == 0
+          - lab_reset_paths | select('search', '(^|/)\.\.(/|$)') | list | length == 0
+        fail_msg: >-
+          Not a demo location: {{ (lab_reset_paths | reject('match', lab_reset_allowed_pattern) | list
+          + lab_reset_paths | select('search', '(^|/)\.\.(/|$)') | list) | unique | join(', ') }}
+        quiet: true
+      run_once: true
+
+    - name: Gather minimal platform facts
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+
+    - name: Remove directories created during UC1 demos
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ lab_reset_paths }}"
+
+    # rmdir only succeeds on an empty directory, so real data is never touched.
+    - name: Remove parent directories left empty
+      ansible.builtin.command:
+        argv: [rmdir, "{{ item }}"]
+      loop: "{{ lab_reset_empty_parents }}"
+      register: lab_reset_rmdir
+      changed_when: lab_reset_rmdir.rc == 0
+      failed_when: false
+
+    - name: Remove the previous large demo file
+      ansible.builtin.file:
+        path: "{{ lab_reset_bigfile }}"
+        state: absent
+
+    - name: Stage a fresh large file for the UC2 deep dive
+      when: stage_bigfile | string | lower in ['yes', 'true', '1']
+      block:
+        - name: Check free space where the file will be written
+          ansible.builtin.command:
+            argv: [df, -P, -k, "{{ lab_reset_bigfile | dirname }}"]
+          register: lab_reset_df
+          changed_when: false
+          check_mode: false
+
+        # Leave at least twice the file size free so the demo never fills a disk.
+        - name: Create the large demo file
+          ansible.builtin.command:
+            argv: "{{ ['fallocate', '-l', lab_reset_bigfile_mb ~ 'M', lab_reset_bigfile]
+                      if ansible_facts['system'] == 'Linux'
+                      else ['dd', 'if=/dev/zero', 'of=' ~ lab_reset_bigfile, 'bs=1048576', 'count=' ~ lab_reset_bigfile_mb] }}"
+            creates: "{{ lab_reset_bigfile }}"
+          when: (lab_reset_df.stdout_lines[-1].split()[3] | int) > (lab_reset_bigfile_mb | int) * 1024 * 3
+
+        - name: Note when there was not enough space for the demo file
+          ansible.builtin.debug:
+            msg: "Skipped {{ lab_reset_bigfile }}: less than {{ (lab_reset_bigfile_mb | int) * 3 }} MB free."
+          when: (lab_reset_df.stdout_lines[-1].split()[3] | int) <= (lab_reset_bigfile_mb | int) * 1024 * 3
+
+- name: Lab reset | Reset AAP state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    restart_activation: "yes"
+    deny_pending_approvals: "yes"
+    lab_reset_activation: UC2 - Storage Alert Enrichment
+    lab_reset_workflow_prefix: "UC1 - "
+    aap_host_raw: "{{ lookup('ansible.builtin.env', 'AAP_HOSTNAME') or lookup('ansible.builtin.env', 'CONTROLLER_HOST') }}"
+    aap_base: >-
+      {{ (aap_host_raw if aap_host_raw is match('https?://') else 'https://' ~ aap_host_raw)
+         | regex_replace('/+$', '') | regex_replace('/api/controller$', '') }}
+    aap_token: "{{ lookup('ansible.builtin.env', 'AAP_TOKEN') or lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') }}"
+    aap_user: "{{ lookup('ansible.builtin.env', 'AAP_USERNAME') or lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') }}"
+    aap_pass: "{{ lookup('ansible.builtin.env', 'AAP_PASSWORD') or lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') }}"
+    aap_verify: "{{ (lookup('ansible.builtin.env', 'AAP_VALIDATE_CERTS') or lookup('ansible.builtin.env', 'CONTROLLER_VERIFY_SSL') or 'true') | bool }}"
+    aap_headers: "{{ {'Authorization': 'Bearer ' ~ aap_token} if aap_token | length > 0 else {} }}"
+
+  module_defaults:
+    ansible.builtin.uri:
+      headers: "{{ aap_headers }}"
+      # Empty credentials mean no basic auth; the bearer header is used instead.
+      url_username: "{{ '' if aap_token | length > 0 else aap_user }}"
+      url_password: "{{ '' if aap_token | length > 0 else aap_pass }}"
+      force_basic_auth: "{{ aap_token | length == 0 }}"
+      validate_certs: "{{ aap_verify }}"
+
+  tasks:
+    - name: Skip AAP cleanup when no platform credential is attached
+      ansible.builtin.debug:
+        msg: "No Red Hat Ansible Automation Platform credential found; skipping approval and activation reset."
+      when: aap_host_raw | length == 0
+
+    - name: Reset AAP objects
+      when: aap_host_raw | length > 0
+      block:
+        - name: Find pending workflow approvals
+          ansible.builtin.uri:
+            url: "{{ aap_base }}/api/controller/v2/workflow_approvals/?status=pending&page_size=200"
+          register: lab_reset_approvals
+          when: deny_pending_approvals | string | lower in ['yes', 'true', '1']
+
+        - name: Deny approvals left pending by earlier UC1 runs
+          ansible.builtin.uri:
+            url: "{{ aap_base }}/api/controller/v2/workflow_approvals/{{ item.id }}/deny/"
+            method: POST
+            status_code: [200, 204]
+          loop: >-
+            {{ lab_reset_approvals.json.results | default([])
+               | selectattr('summary_fields.source_workflow_job.name', 'defined')
+               | selectattr('summary_fields.source_workflow_job.name', 'match', lab_reset_workflow_prefix | regex_escape)
+               | list }}
+          loop_control:
+            label: "approval {{ item.id }} ({{ item.summary_fields.source_workflow_job.name }})"
+          when: deny_pending_approvals | string | lower in ['yes', 'true', '1']
+          changed_when: true
+
+        - name: Find the EDA activation
+          ansible.builtin.uri:
+            url: "{{ aap_base }}/api/eda/v1/activations/?name={{ lab_reset_activation | urlencode }}"
+          register: lab_reset_activation_lookup
+          when: restart_activation | string | lower in ['yes', 'true', '1']
+
+        - name: Restart the activation to clear throttle windows
+          ansible.builtin.uri:
+            url: "{{ aap_base }}/api/eda/v1/activations/{{ lab_reset_activation_lookup.json.results[0].id }}/restart/"
+            method: POST
+            status_code: [200, 202, 204]
+          when:
+            - restart_activation | string | lower in ['yes', 'true', '1']
+            - lab_reset_activation_lookup.json.results | default([]) | length > 0
+          changed_when: true
+
+        - name: Summarise the reset
+          ansible.builtin.debug:
+            msg:
+              - "Pending UC1 approvals denied: {{ (lab_reset_approvals.json.results | default([]) | selectattr('summary_fields.source_workflow_job.name', 'defined') | selectattr('summary_fields.source_workflow_job.name', 'match', lab_reset_workflow_prefix | regex_escape) | list | length) if lab_reset_approvals.json is defined else 'skipped' }}"
+              - "Activation restarted: {{ 'yes' if (lab_reset_activation_lookup.json.results | default([]) | length > 0 and restart_activation | string | lower in ['yes', 'true', '1']) else 'no (not found or skipped)' }}"

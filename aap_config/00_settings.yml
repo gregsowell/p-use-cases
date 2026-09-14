@@ -19,11 +19,24 @@ uc_machine_credential: generic-lab-root         # SSH user with root/sudo on tar
 uc_execution_environment: "Default execution environment"
 uc_decision_environment: "Hub Default Decision Environment"
 uc_eda_aap_credential: Controller               # EDA credential of type "Red Hat Ansible Automation Platform"
+uc_aap_credential: aap                          # controller credential of the same type (lab reset job)
+
+# UC1 survey defaults (a request that works as-is against the lab)
+uc_uc1_default_targets: node01
+uc_uc1_default_directories: "/app/demo/data, /app/demo/logs"
+uc_uc1_default_owner: nobody
+uc_uc1_default_group: nobody
+uc_uc1_default_mode: "2775"
 
 # UC2 survey defaults
 uc_uc2_default_targets: node01                  # e.g. aix_servers in an AIX estate
-uc_uc2_default_paths: /var
+uc_uc2_default_paths: "/var, /tmp"
+uc_uc2_default_incident: INC0010042             # mock mode prints the work note for it
+uc_uc2_default_deep_dive: "yes"
 uc_snow_mode: mock                              # mock | live
+
+# Lab reset survey defaults
+uc_reset_default_targets: node01
 
 # ---------------------------------------------------------------------------
 # Placeholder secrets. Pass real values as extra vars at launch time;

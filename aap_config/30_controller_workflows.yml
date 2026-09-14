@@ -21,7 +21,7 @@ controller_workflows:
           required: true
           min: 1
           max: 1024
-          default: ""
+          default: "{{ uc_uc1_default_targets }}"
         - question_name: Directories / mount points
           question_description: Absolute paths, comma-separated or one per line (e.g. /app/data, /app/logs)
           variable: directory_list
@@ -29,7 +29,7 @@ controller_workflows:
           required: true
           min: 1
           max: 4096
-          default: ""
+          default: "{{ uc_uc1_default_directories }}"
         - question_name: Owner
           question_description: Existing user that will own the directories
           variable: dir_owner
@@ -37,7 +37,7 @@ controller_workflows:
           required: true
           min: 1
           max: 32
-          default: ""
+          default: "{{ uc_uc1_default_owner }}"
         - question_name: Group
           question_description: Existing group for the directories
           variable: dir_group
@@ -45,7 +45,7 @@ controller_workflows:
           required: true
           min: 1
           max: 32
-          default: ""
+          default: "{{ uc_uc1_default_group }}"
         - question_name: Permissions (optional)
           question_description: Octal mode such as 0755 or 2775. Leave blank for the platform default.
           variable: dir_mode
@@ -53,7 +53,7 @@ controller_workflows:
           required: false
           min: 0
           max: 4
-          default: ""
+          default: "{{ uc_uc1_default_mode }}"
     workflow_nodes:
       - identifier: uc1-validate
         unified_job_template:
@@ -119,7 +119,7 @@ controller_workflows:
           required: false
           min: 0
           max: 40
-          default: ""
+          default: "{{ uc_uc2_default_incident }}"
         - question_name: Include troubleshooting detail?
           question_description: Adds largest directories, recent large files and volume group headroom
           variable: sr_deep_dive
@@ -128,7 +128,7 @@ controller_workflows:
           choices:
             - "no"
             - "yes"
-          default: "no"
+          default: "{{ uc_uc2_default_deep_dive }}"
     workflow_nodes:
       - identifier: uc2-collect
         unified_job_template:

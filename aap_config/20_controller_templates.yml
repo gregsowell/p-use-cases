@@ -1,5 +1,58 @@
 ---
 controller_templates:
+  # --- Lab reset: run before (and after) a demo ------------------------------
+  - name: Use Cases - Reset Lab
+    description: Removes UC1 demo directories, stages a large file for UC2, denies stale approvals, restarts the EDA activation
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/lab_reset.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    credentials:
+      - "{{ uc_machine_credential }}"
+      - "{{ uc_aap_credential }}"
+    ask_variables_on_launch: true
+    survey_enabled: true
+    survey_spec:
+      name: Lab reset
+      description: Return the demo lab to a known starting point
+      spec:
+        - question_name: Target servers
+          question_description: Hosts to clean (only /app/demo, /tmp/uc-demo and the demo file are removed)
+          variable: target_hosts
+          type: text
+          required: true
+          min: 1
+          max: 1024
+          default: "{{ uc_reset_default_targets }}"
+        - question_name: Stage a 2 GB file for the UC2 deep dive?
+          question_description: Creates /tmp/uc-demo-bigfile so "large recent files" has a finding
+          variable: stage_bigfile
+          type: multiplechoice
+          required: true
+          choices:
+            - "yes"
+            - "no"
+          default: "yes"
+        - question_name: Restart the EDA activation?
+          question_description: Clears the 15-minute alert throttle so alerts can be replayed immediately
+          variable: restart_activation
+          type: multiplechoice
+          required: true
+          choices:
+            - "yes"
+            - "no"
+          default: "yes"
+        - question_name: Deny pending UC1 approvals?
+          question_description: Cleans up approvals left waiting by earlier runs
+          variable: deny_pending_approvals
+          type: multiplechoice
+          required: true
+          choices:
+            - "yes"
+            - "no"
+          default: "yes"
+
   # --- UC1: self-service directory provisioning -----------------------------
   - name: UC1 - Validate Directory Request
     description: Guardrail checks on a directory request (runs before approval)

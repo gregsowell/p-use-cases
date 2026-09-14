@@ -17,6 +17,7 @@ Step-by-step demo: [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md).
 aap_config/                   Config as code for every AAP object (infra.aap_configuration format)
 playbooks/
   aap_configure.yml           Applies aap_config/ to AAP
+  lab_reset.yml               Returns the demo lab to a known starting point
   uc1_validate_request.yml    UC1: guardrail checks (runs before approval)
   uc1_create_directories.yml  UC1: create directories, print a summary table
   uc2_storage_report.yml      UC2: normalize survey or alert, collect df, build report
@@ -40,6 +41,7 @@ execution-environment/        EE definition for config as code (and servicenow.i
 |------|------|-------|
 | Project (controller and EDA) | AAP Use Cases | This repository |
 | Credential type and credential | ServiceNow ITSM (use cases) / UC2 - ServiceNow | Injects `SN_HOST`, `SN_USERNAME`, `SN_PASSWORD` |
+| Job template | Use Cases - Reset Lab | Cleans demo directories, stages a demo file, denies stale approvals, restarts the activation |
 | Job template | UC1 - Validate Directory Request | Runs on localhost only |
 | Job template | UC1 - Create Directories | Machine credential, `become` |
 | Job template | UC2 - Collect Storage Utilization | Read-only |
@@ -85,10 +87,21 @@ To run from a workstation instead, export `AAP_HOSTNAME` and `AAP_TOKEN` and run
 
 ## Running the use cases
 
-### UC1: directories
-Launch **UC1 - Self-Service Directory Provisioning**:
+The surveys come pre-filled with lab defaults (`uc_uc1_default_*` and `uc_uc2_default_*` in `aap_config/00_settings.yml`), so each workflow runs as-is.
 
-| Survey field | Example |
+### Resetting the lab
+Run **Use Cases - Reset Lab** before a demo (and after, to clean up):
+- removes `/app/demo` and `/tmp/uc-demo`, plus `/app` if it's left empty; nothing outside those paths is touched
+- re-creates a 2 GB `/tmp/uc-demo-bigfile` so the UC2 deep dive finds a recent large file (skipped if free space is under 3× that size)
+- denies UC1 approvals left pending by earlier runs
+- restarts the EDA activation, clearing the 15-minute throttle so alerts can be replayed
+
+The last two steps use the job template's *Red Hat Ansible Automation Platform* credential (`uc_aap_credential`) and are skipped without one.
+
+### UC1: directories
+Launch **UC1 - Self-Service Directory Provisioning**. Defaults:
+
+| Survey field | Default |
 |---|---|
 | Target servers | `node01` |
 | Directories | `/app/demo/data, /app/demo/logs` |
@@ -105,10 +118,11 @@ Validation rejects the following before anyone is asked to approve:
 Existing directories are reported and **left unchanged** by default. Tune the guardrails in [`roles/directory_provision/defaults/main.yml`](roles/directory_provision/defaults/main.yml).
 
 ### UC2: storage report
-Launch **UC2 - Storage Utilization Report**:
+Launch **UC2 - Storage Utilization Report**. Defaults:
 - Targets: `node01`
 - Paths: `/var, /tmp`
-- Troubleshooting detail: `yes` adds the largest directories, recent large files, volume group headroom and a suggested extend command. The command is advisory only.
+- Incident: `INC0010042`
+- Troubleshooting detail: `yes`, which adds the largest directories, recent large files, volume group headroom and a suggested extend command. The command is advisory only.
 - Incident number: if you enter one, the second workflow node shows the work note (mock) or adds it (live).
 
 ### UC2 + EDA: alert to enriched incident

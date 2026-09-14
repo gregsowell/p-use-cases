@@ -6,21 +6,15 @@ Target length is **about 25 minutes**. The lab target host is `node01`.
 - [ ] Config as code has run successfully since the last Git push.
 - [ ] `UC2 - Storage Alert Enrichment` activation is **Running** (Automation Decisions → Rulebook Activations).
 - [ ] Both event stream URLs are copied into a terminal ready to paste.
-- [ ] On the demo host, create a large file so the report is interesting (remove it afterwards):
-  ```bash
-  sudo fallocate -l 2G /tmp/uc-demo-bigfile
-  ```
-- [ ] Clear old demo directories so UC1 shows `CREATED`:
-  ```bash
-  sudo rm -rf /app/demo
-  ```
+- [ ] Run **Use Cases - Reset Lab** with its defaults. It clears UC1 demo directories so UC1 shows `CREATED`, stages a 2 GB file for the UC2 deep dive, denies stale approvals and restarts the activation so throttling starts fresh.
+- [ ] After the demo, run **Use Cases - Reset Lab** again with *Stage a 2 GB file* set to `no` to leave the host clean.
 - [ ] Browser tabs open: UC1 workflow, UC2 workflow, Jobs, Rulebook activation → History, Event Streams.
 
 ## Act 1: self-service directories (UC1), about 8 min
 1. Launch **UC1 - Self-Service Directory Provisioning**.
 2. **Show a guardrail first.** Enter `/etc/app, /var` as the directories. The validate job fails with plain-English reasons.
    Talking point: *bad requests never reach an approver or a server.*
-3. Relaunch with valid input:
+3. Relaunch and keep the survey defaults, which are a valid request:
    - Targets: `node01`
    - Directories: `/app/demo/data, /app/demo/logs`
    - Owner / group: `nobody` / `nobody`
@@ -31,7 +25,7 @@ Target length is **about 25 minutes**. The lab target host is `node01`.
    Talking point: *idempotent; never re-owns existing data.*
 
 ## Act 2: storage report (UC2), about 5 min
-1. Launch **UC2 - Storage Utilization Report**:
+1. Launch **UC2 - Storage Utilization Report**. The defaults (`node01`, `/var, /tmp`, INC0010042, deep dive `yes`) work as-is; add `, /nope` to the paths to show error handling:
    - Targets: `node01`
    - Paths: `/var, /tmp, /nope`
    - Troubleshooting detail: `yes`
@@ -46,7 +40,7 @@ Target length is **about 25 minutes**. The lab target host is `node01`.
    ```
 3. Activation History shows the rule fired, and Jobs shows the UC2 workflow launched with `alert_source=netcool`.
 4. Open **UC2 - Update ServiceNow Incident**: the work note for INC0010042 (mock), or the real incident in live mode.
-5. **Send the same alert again.** Nothing launches, because it's throttled for 15 minutes per host and mount.
+5. **Send the same alert again.** Nothing launches, because it's throttled for 15 minutes per host and mount. To replay the act, run **Use Cases - Reset Lab**, which restarts the activation.
 6. Send the Dynatrace problem with an FQDN:
    ```bash
    ./eda/send_test_event.sh dynatrace "$DYNATRACE_URL" "dynatrace:$DT_PASS" node01.lab.example.com /var
