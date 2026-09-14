@@ -4,6 +4,11 @@
 
 uc_organization: Default
 
+# infra.aap_configuration waits on async API work (e.g. project syncs) for
+# retries x delay seconds. Project syncs can take a couple of minutes.
+aap_configuration_async_retries: 120
+aap_configuration_async_delay: 5
+
 # Git repository that AAP (controller + EDA) syncs this content from.
 uc_scm_url: https://github.com/gregsowell/p-use-cases.git
 uc_scm_branch: main
