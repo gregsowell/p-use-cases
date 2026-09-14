@@ -1,0 +1,163 @@
+---
+# UC2 alert simulator: stands in for Netcool or Dynatrace.
+#
+# Builds an alert from eda/payloads/, posts it to the matching AAP event stream
+# exactly as the monitoring tool would, then watches for the UC2 workflow that
+# the rulebook launches.
+#
+# Needs two credentials on the job template:
+#   - "Red Hat Ansible Automation Platform" (finds the event stream, watches jobs)
+#   - "Event Stream Secrets (use cases)" (the stream token / basic auth)
+- name: UC2 | Simulate a monitoring alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    alert_type: netcool            # netcool | netcool-clear | dynatrace
+    alert_host: node01
+    alert_path: /var
+    alert_incident: INC0010042
+    wait_for_workflow: true
+    workflow_name: UC2 - Storage Utilization Report
+    event_streams:
+      netcool: UC2 - Netcool Alerts
+      netcool-clear: UC2 - Netcool Alerts
+      dynatrace: UC2 - Dynatrace Problems
+    payload_files:
+      netcool: netcool_filesystem_alert.json
+      netcool-clear: netcool_resolution_ignored.json
+      dynatrace: dynatrace_low_disk_problem.json
+
+    aap_host_raw: "{{ lookup('ansible.builtin.env', 'AAP_HOSTNAME') or lookup('ansible.builtin.env', 'CONTROLLER_HOST') }}"
+    aap_base: >-
+      {{ (aap_host_raw if aap_host_raw is match('https?://') else 'https://' ~ aap_host_raw)
+         | regex_replace('/+$', '') | regex_replace('/api/controller$', '') }}
+    aap_token: "{{ lookup('ansible.builtin.env', 'AAP_TOKEN') or lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') }}"
+    aap_user: "{{ lookup('ansible.builtin.env', 'AAP_USERNAME') or lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') }}"
+    aap_pass: "{{ lookup('ansible.builtin.env', 'AAP_PASSWORD') or lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') }}"
+    aap_verify: "{{ (lookup('ansible.builtin.env', 'AAP_VALIDATE_CERTS') or lookup('ansible.builtin.env', 'CONTROLLER_VERIFY_SSL') or 'true') | bool }}"
+    aap_headers: "{{ {'Authorization': 'Bearer ' ~ aap_token} if aap_token | length > 0 else {} }}"
+
+  tasks:
+    - name: Check the request and required credentials
+      ansible.builtin.assert:
+        that:
+          - alert_type in payload_files
+          - alert_host is match('^[A-Za-z0-9._-]+$')
+          - alert_path is match('^/[A-Za-z0-9._@+/-]*$')
+          - alert_incident | default('') is match('^[A-Za-z0-9_-]*$')
+          - aap_host_raw | length > 0
+          - uc_netcool_stream_token is defined
+          - uc_dynatrace_stream_password is defined
+        fail_msg: >-
+          Invalid input or missing credentials. alert_type must be one of {{ payload_files.keys() | list }},
+          host/path/incident must be simple names, and the job template needs both a
+          "Red Hat Ansible Automation Platform" credential and the "Use Cases - Event Stream Secrets" credential.
+        quiet: true
+
+    - name: Load the sample payload
+      ansible.builtin.set_fact:
+        sim_base_payload: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../eda/payloads/' ~ payload_files[alert_type]) | from_json }}"
+        sim_now: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        sim_short_host: "{{ alert_host | regex_replace('\\..*$', '') }}"
+
+    - name: Build the Netcool alert
+      when: alert_type in ['netcool', 'netcool-clear']
+      ansible.builtin.set_fact:
+        sim_payload: >-
+          {{ sim_base_payload | combine({
+               'Identifier': sim_short_host ~ ':FileSystem:' ~ alert_path ~ ':FSUsagePct',
+               'Node': alert_host,
+               'AlertKey': alert_path,
+               'Summary': ('File system ' ~ alert_path ~ ' is 71% used - cleared') if alert_type == 'netcool-clear'
+                          else ('File system ' ~ alert_path ~ ' is 92% used (threshold 90%)'),
+               'TTNumber': alert_incident | default(''),
+               'LastOccurrence': sim_now }) }}
+
+    # A stable ProblemID per host and path makes repeats throttle like Netcool.
+    - name: Build the Dynatrace problem notification
+      when: alert_type == 'dynatrace'
+      ansible.builtin.set_fact:
+        sim_payload: >-
+          {{ sim_base_payload | combine({
+               'ProblemID': (alert_host ~ alert_path) | hash('sha1') | truncate(19, true, ''),
+               'ImpactedEntityNames': alert_host,
+               'ImpactedEntities': [{'type': 'HOST', 'name': alert_host, 'entity': sim_base_payload.ImpactedEntities[0].entity}],
+               'ProblemDetailsJSON': {'rankedEvents': [sim_base_payload.ProblemDetailsJSON.rankedEvents[0] | combine({'entityName': alert_path})]} }) }}
+
+    - name: Find the event stream
+      ansible.builtin.uri:
+        url: "{{ aap_base }}/api/eda/v1/event-streams/?name={{ event_streams[alert_type] | urlencode }}"
+        headers: "{{ aap_headers }}"
+        url_username: "{{ '' if aap_token | length > 0 else aap_user }}"
+        url_password: "{{ '' if aap_token | length > 0 else aap_pass }}"
+        force_basic_auth: "{{ aap_token | length == 0 }}"
+        validate_certs: "{{ aap_verify }}"
+      register: sim_stream
+
+    - name: Stop when the event stream does not exist
+      ansible.builtin.assert:
+        that: sim_stream.json.results | length > 0
+        fail_msg: "Event stream '{{ event_streams[alert_type] }}' not found. Run Use Cases - Configure AAP first."
+        quiet: true
+
+    - name: Record the time just before sending
+      ansible.builtin.set_fact:
+        sim_sent_after: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%S') }}"
+
+    # Authenticates the way the real tool would: Netcool with a header token,
+    # Dynatrace with basic auth.
+    - name: Post the alert to the event stream
+      ansible.builtin.uri:
+        url: "{{ sim_stream.json.results[0].url }}"
+        method: POST
+        body_format: json
+        body: "{{ sim_payload }}"
+        headers: "{{ {'X-Event-Token': uc_netcool_stream_token} if alert_type != 'dynatrace' else {} }}"
+        url_username: "{{ uc_dynatrace_stream_username if alert_type == 'dynatrace' else '' }}"
+        url_password: "{{ uc_dynatrace_stream_password if alert_type == 'dynatrace' else '' }}"
+        force_basic_auth: "{{ alert_type == 'dynatrace' }}"
+        validate_certs: "{{ aap_verify }}"
+        status_code: [200, 202]
+      register: sim_post
+
+    - name: Show what was sent
+      ansible.builtin.debug:
+        msg:
+          - "Sent {{ alert_type }} alert to event stream '{{ event_streams[alert_type] }}' (HTTP {{ sim_post.status }})"
+          - "Payload:"
+          - "{{ sim_payload }}"
+
+    - name: Watch for the workflow launched by Event-Driven Ansible
+      when:
+        - wait_for_workflow | bool
+        - alert_type != 'netcool-clear'
+      block:
+        - name: Wait for the UC2 workflow to start
+          ansible.builtin.uri:
+            url: "{{ aap_base }}/api/controller/v2/workflow_jobs/?name={{ workflow_name | urlencode }}&created__gt={{ sim_sent_after }}&order_by=-id"
+            headers: "{{ aap_headers }}"
+            url_username: "{{ '' if aap_token | length > 0 else aap_user }}"
+            url_password: "{{ '' if aap_token | length > 0 else aap_pass }}"
+            force_basic_auth: "{{ aap_token | length == 0 }}"
+            validate_certs: "{{ aap_verify }}"
+          register: sim_workflow
+          until: sim_workflow.json.results | length > 0
+          retries: 12
+          delay: 5
+          failed_when: false
+
+        - name: Report the triggered workflow
+          ansible.builtin.debug:
+            msg: >-
+              {{ ('Event-Driven Ansible launched workflow job ' ~ sim_workflow.json.results[0].id
+                  ~ ' (' ~ workflow_name ~ '): ' ~ aap_base ~ '/execution/jobs/workflow/' ~ sim_workflow.json.results[0].id ~ '/output')
+                 if sim_workflow.json.results | default([]) | length > 0
+                 else ('No workflow started within 60 seconds. The same host and path within 15 minutes is throttled by the rulebook; '
+                       ~ 'run Use Cases - Reset Lab to clear it, or check Automation Decisions > Rulebook Activations > History.') }}
+
+    - name: Explain the resolution event
+      ansible.builtin.debug:
+        msg: "Resolution events match no action rule; the activation log prints the event and no workflow runs."
+      when: alert_type == 'netcool-clear'

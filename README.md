@@ -22,6 +22,7 @@ playbooks/
   uc1_create_directories.yml  UC1: create directories, print a summary table
   uc2_storage_report.yml      UC2: normalize survey or alert, collect df, build report
   uc2_update_incident.yml     UC2: add the report to a ServiceNow incident (mock or live)
+  uc2_simulate_alert.yml      UC2: post a simulated Netcool/Dynatrace alert to its event stream
 roles/
   directory_provision/        UC1 logic: validate, create, report
   storage_report/             UC2 logic: normalize, collect, deep_dive, report, work-note template
@@ -41,11 +42,13 @@ execution-environment/        EE definition for config as code (and servicenow.i
 |------|------|-------|
 | Project (controller and EDA) | AAP Use Cases | This repository |
 | Credential type and credential | ServiceNow ITSM (use cases) / UC2 - ServiceNow | Injects `SN_HOST`, `SN_USERNAME`, `SN_PASSWORD` |
+| Credential type and credential | Event Stream Secrets (use cases) / Use Cases - Event Stream Secrets | Injects the event stream token and password as extra vars |
 | Job template | Use Cases - Reset Lab | Cleans demo directories, stages a demo file, denies stale approvals, restarts the activation |
 | Job template | UC1 - Validate Directory Request | Runs on localhost only |
 | Job template | UC1 - Create Directories | Machine credential, `become` |
 | Job template | UC2 - Collect Storage Utilization | Read-only |
 | Job template | UC2 - Update ServiceNow Incident | `snow_mode`: mock or live |
+| Job template | UC2 - Simulate Monitoring Alert | Sends a Netcool, Netcool clear or Dynatrace alert through EDA and reports the workflow it launched |
 | Workflow | **UC1 - Self-Service Directory Provisioning** | Survey → validate → **approval** → create |
 | Workflow | **UC2 - Storage Utilization Report** | Survey or EDA → collect → (always) update incident |
 | EDA credentials | UC2 - Netcool Event Stream Token, UC2 - Dynatrace Event Stream | Header token and basic auth |
@@ -78,8 +81,9 @@ Some existing objects are referenced by name rather than created. Set them in [`
    uc_netcool_stream_token: <random string>
    uc_dynatrace_stream_password: <random string>
    ```
-5. **Launch it.** Re-run it after any change to `aap_config/`. The playbook syncs the EDA project, waits for the import, then creates the rulebook activation. Existing activations are left running on re-runs. An activation keeps the rulebook it was created with, so after editing a rulebook, re-run with `uc_recreate_activations: true`.
-6. **Collect the URLs:** Automation Decisions → Event Streams → copy the URL of each stream.
+5. **Attach the secrets credential.** After the first run, add **Use Cases - Event Stream Secrets** to this job template and remove the secret extra vars. Re-runs then reuse the stored values instead of resetting the event stream credentials to the placeholders.
+6. **Launch it.** Re-run it after any change to `aap_config/`. The playbook syncs the EDA project, waits for the import, then creates the rulebook activation. Existing activations are left running on re-runs. An activation keeps the rulebook it was created with, so after editing a rulebook, re-run with `uc_recreate_activations: true`.
+7. **Collect the URLs** (only needed for the command-line simulators): Automation Decisions → Event Streams → copy the URL of each stream.
 
 To run from a workstation instead, export `AAP_HOSTNAME` and `AAP_TOKEN` and run `ansible-playbook playbooks/aap_configure.yml` with the collections installed.
 
@@ -126,6 +130,14 @@ Launch **UC2 - Storage Utilization Report**. Defaults:
 - Incident number: if you enter one, the second workflow node shows the work note (mock) or adds it (live).
 
 ### UC2 + EDA: alert to enriched incident
+Launch **UC2 - Simulate Monitoring Alert** and pick an alert type:
+- `netcool`: filesystem alert for the server and path; launches the UC2 workflow
+- `netcool-clear`: resolution event; the rulebook logs it and does nothing
+- `dynatrace`: low disk space problem; use an FQDN such as `node01.lab.example.com` to show inventory name mapping
+
+The job looks up the event stream, authenticates like the real tool (header token or basic auth), posts the alert, then prints the workflow job that EDA launched. Sending the same host and path again within 15 minutes is throttled; run **Use Cases - Reset Lab** to clear it.
+
+From a terminal instead:
 ```bash
 ./eda/send_test_event.sh netcool   "<netcool stream url>"   "<token>"               node01 /var INC0010042
 ./eda/send_test_event.sh dynatrace "<dynatrace stream url>" "dynatrace:<password>"  node01.lab.example.com /tmp

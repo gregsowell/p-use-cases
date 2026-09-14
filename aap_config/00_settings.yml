@@ -38,6 +38,11 @@ uc_snow_mode: mock                              # mock | live
 # Lab reset survey defaults
 uc_reset_default_targets: node01
 
+# Alert simulator survey defaults
+uc_sim_default_host: node01
+uc_sim_default_path: /var
+uc_sim_default_incident: INC0010042
+
 # ---------------------------------------------------------------------------
 # Placeholder secrets. Pass real values as extra vars at launch time;
 # never commit them. update_secrets is off, so re-runs keep what is in AAP.

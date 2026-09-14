@@ -53,6 +53,59 @@ controller_templates:
             - "no"
           default: "yes"
 
+  # --- UC2: alert simulator (stands in for Netcool / Dynatrace) -------------
+  - name: UC2 - Simulate Monitoring Alert
+    description: Posts a representative Netcool or Dynatrace alert to its EDA event stream and reports the workflow it triggers
+    organization: "{{ uc_organization }}"
+    project: AAP Use Cases
+    playbook: playbooks/uc2_simulate_alert.yml
+    inventory: "{{ uc_inventory }}"
+    execution_environment: "{{ uc_execution_environment }}"
+    credentials:
+      - "{{ uc_aap_credential }}"
+      - Use Cases - Event Stream Secrets
+    ask_variables_on_launch: true
+    allow_simultaneous: true
+    survey_enabled: true
+    survey_spec:
+      name: Simulated monitoring alert
+      description: Send a test alert through Event-Driven Ansible
+      spec:
+        - question_name: Alert type
+          question_description: "netcool = filesystem alert; netcool-clear = resolution (ignored by the rulebook); dynatrace = low disk space problem"
+          variable: alert_type
+          type: multiplechoice
+          required: true
+          choices:
+            - netcool
+            - netcool-clear
+            - dynatrace
+          default: netcool
+        - question_name: Server
+          question_description: Host named in the alert (an FQDN such as node01.lab.example.com shows inventory name mapping)
+          variable: alert_host
+          type: text
+          required: true
+          min: 1
+          max: 255
+          default: "{{ uc_sim_default_host }}"
+        - question_name: Directory or mount point
+          question_description: Filesystem the alert is about
+          variable: alert_path
+          type: text
+          required: true
+          min: 1
+          max: 255
+          default: "{{ uc_sim_default_path }}"
+        - question_name: ServiceNow incident (Netcool only)
+          question_description: Sent as the Netcool TTNumber field
+          variable: alert_incident
+          type: text
+          required: false
+          min: 0
+          max: 40
+          default: "{{ uc_sim_default_incident }}"
+
   # --- UC1: self-service directory provisioning -----------------------------
   - name: UC1 - Validate Directory Request
     description: Guardrail checks on a directory request (runs before approval)

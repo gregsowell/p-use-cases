@@ -25,7 +25,46 @@ controller_credential_types:
         SN_USERNAME: !unsafe "{{ username }}"
         SN_PASSWORD: !unsafe "{{ password }}"
 
+  # Holds the event stream secrets once, encrypted in AAP. Injected as extra
+  # vars so both the alert simulator and "Configure AAP" (attach it there too)
+  # use the same values that the EDA event stream credentials were built with.
+  - name: Event Stream Secrets (use cases)
+    description: Injects uc_netcool_stream_token / uc_dynatrace_stream_username / uc_dynatrace_stream_password
+    kind: cloud
+    inputs:
+      fields:
+        - id: netcool_token
+          type: string
+          label: Netcool event stream token
+          secret: true
+        - id: dynatrace_username
+          type: string
+          label: Dynatrace event stream username
+        - id: dynatrace_password
+          type: string
+          label: Dynatrace event stream password
+          secret: true
+      required:
+        - netcool_token
+        - dynatrace_username
+        - dynatrace_password
+    injectors:
+      extra_vars:
+        uc_netcool_stream_token: !unsafe "{{ netcool_token }}"
+        uc_dynatrace_stream_username: !unsafe "{{ dynatrace_username }}"
+        uc_dynatrace_stream_password: !unsafe "{{ dynatrace_password }}"
+
 controller_credentials:
+  - name: Use Cases - Event Stream Secrets
+    description: Secrets for the UC2 event streams (used by the alert simulator and config as code)
+    organization: "{{ uc_organization }}"
+    credential_type: Event Stream Secrets (use cases)
+    update_secrets: false
+    inputs:
+      netcool_token: "{{ uc_netcool_stream_token }}"
+      dynatrace_username: "{{ uc_dynatrace_stream_username }}"
+      dynatrace_password: "{{ uc_dynatrace_stream_password }}"
+
   - name: UC2 - ServiceNow
     description: ServiceNow instance for incident enrichment (UC2)
     organization: "{{ uc_organization }}"
