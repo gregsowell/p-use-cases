@@ -11,7 +11,7 @@ STORAGE UTILIZATION
 
 ---- {{ row.server }} : {{ row.requested_path }}  ({{ row.filesystem }} on {{ row.mount }}, {{ row.platform }}) ----
 Largest directories:
-{% for d in row.insights.top_dirs[:storage_report_top_n | int] %}
+{% for d in (row.insights.top_dirs | rejectattr('0', 'equalto', '0') | list)[:storage_report_top_n | int] %}
   {{ '%10s' | format((d[0] | int * 1024) | human_readable) }}  {{ d[1] }}
 {% else %}
   (none found or scan not permitted)

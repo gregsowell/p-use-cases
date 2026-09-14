@@ -136,8 +136,10 @@ Launch **UC2 - Storage Utilization Report**:
 - **Status:** the AIX-specific commands were written from AIX 7.x documentation and tested against sample AIX output, not a live LPAR. Validate on a nonprod AIX host first.
 
 ## Testing
-- **Templating:** the role logic and work-note template were run through ansible-core's templating engine with:
-  - survey inputs, Netcool payloads and Dynatrace payloads
-  - Linux and AIX `df`, `du`, `find`, `lvs` and `lsvg` output
-  - unreachable, unknown and invalid-input cases
+- **End to end on an AAP 2.6 lab (RHEL 9 target):**
+  - config as code applied and re-applied cleanly
+  - UC1 rejects a bad request before approval; a valid one runs validate → approve → create
+  - UC2 survey run with deep dive and the mock ServiceNow update
+  - EDA via both event streams: Netcool alert launches the workflow, the duplicate is throttled, the clear is ignored, and the Dynatrace FQDN maps to the inventory host
+- **Templating:** the role logic and work-note template were also run through ansible-core's templating engine with AIX `df`/`lsvg` output and edge cases. The AIX commands themselves have not been run on a live LPAR.
 - **Files:** every YAML and JSON file parses, and the rulebook validates against the ansible-rulebook JSON schema.
