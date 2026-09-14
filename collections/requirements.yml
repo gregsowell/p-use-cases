@@ -1,8 +1,0 @@
----
-# Installed by AAP on project sync from Ansible Galaxy. Needed only for
-# ServiceNow live mode; UC1/UC2 collection jobs use ansible.builtin only.
-# Config as code (infra.aap_configuration + certified ansible.controller,
-# ansible.platform, ansible.eda) belongs in an execution environment instead:
-# see execution-environment/execution-environment.yml.
-collections:
-  - name: servicenow.itsm

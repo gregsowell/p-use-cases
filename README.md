@@ -31,8 +31,7 @@ eda/
   send_test_event.sh          Simulate an alert (bash/curl)
   Send-TestEvent.ps1          Simulate an alert (PowerShell)
 inventory/hosts.example.yml   Example layout, including AIX connection variables
-collections/requirements.yml  servicenow.itsm (installed on project sync)
-execution-environment/        EE definition for config as code and ServiceNow live mode
+execution-environment/        EE definition for config as code (and servicenow.itsm for live mode)
 ```
 
 ## AAP objects
