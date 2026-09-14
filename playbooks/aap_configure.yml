@@ -95,7 +95,7 @@
       register: eda_project
       # Wait for the sync requested above, not the previous import.
       until:
-        - eda_project.json.last_sync_at | default('') != eda_project_lookup.json.results[0].last_sync_at | default('')
+        - eda_project.json.modified_at | default('') != eda_project_lookup.json.results[0].modified_at | default('')
         - eda_project.json.import_state | default('') in ['completed', 'failed']
       retries: "{{ eda_project_import_retries }}"
       delay: 10
