@@ -93,7 +93,10 @@
         force_basic_auth: "{{ not uc_use_token }}"
         validate_certs: "{{ aap_validate_certs }}"
       register: eda_project
-      until: eda_project.json.import_state | default('') in ['completed', 'failed']
+      # Wait for the sync requested above, not the previous import.
+      until:
+        - eda_project.json.last_sync_at | default('') != eda_project_lookup.json.results[0].last_sync_at | default('')
+        - eda_project.json.import_state | default('') in ['completed', 'failed']
       retries: "{{ eda_project_import_retries }}"
       delay: 10
       vars:
