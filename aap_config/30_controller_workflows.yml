@@ -65,9 +65,10 @@ controller_workflows:
           success_nodes:
             - identifier: uc1-approve
       - identifier: uc1-approve
-        approval_node:
+        unified_job_template:
           name: Approve directory request
           description: Review the validated request in the previous job's output, then approve or deny.
+          type: workflow_approval
           timeout: 3600
         related:
           success_nodes:
