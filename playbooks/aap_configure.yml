@@ -108,8 +108,84 @@
         fail_msg: "EDA project import failed: {{ eda_project.json.import_error | default('see the EDA project page') }}"
         quiet: true
 
-    - name: Apply the rulebook activation
+    # EDA refuses to update a running activation, and an activation keeps the
+    # rulebook it was created with. So existing activations are left alone
+    # unless uc_recreate_activations=true, which deletes and recreates them
+    # (use it after changing a rulebook).
+    - name: Look up existing rulebook activations
+      ansible.builtin.uri:
+        url: "{{ uc_api_base }}/api/eda/v1/activations/?name={{ item.name | urlencode }}"
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      loop: "{{ uc_eda_rulebook_activations }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: uc_activation_lookup
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
+
+    - name: Delete activations that should be recreated
+      ansible.builtin.uri:
+        url: "{{ uc_api_base }}/api/eda/v1/activations/{{ item.json.results[0].id }}/"
+        method: DELETE
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [202, 204]
+      loop: "{{ uc_activation_lookup.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - uc_recreate_activations | default(false) | bool
+        - item.json.results | length > 0
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
+
+    - name: Wait for deleted activations to disappear
+      ansible.builtin.uri:
+        url: "{{ uc_api_base }}/api/eda/v1/activations/?name={{ item.item.name | urlencode }}"
+        headers: "{{ uc_api_headers }}"
+        url_username: "{{ omit if uc_use_token else uc_api_username }}"
+        url_password: "{{ omit if uc_use_token else uc_api_password }}"
+        force_basic_auth: "{{ not uc_use_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+      loop: "{{ uc_activation_lookup.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      register: uc_activation_gone
+      until: uc_activation_gone.json.results | length == 0
+      retries: 30
+      delay: 5
+      when:
+        - uc_recreate_activations | default(false) | bool
+        - item.json.results | length > 0
+      vars:
+        uc_api_headers: "{{ {'Authorization': 'Bearer ' ~ uc_api_token} if uc_use_token else {} }}"
+
+    - name: Decide which activations to create
+      ansible.builtin.set_fact:
+        uc_activations_to_apply: >-
+          {{ uc_eda_rulebook_activations
+             if uc_recreate_activations | default(false) | bool
+             else (uc_activation_lookup.results | rejectattr('json.results') | map(attribute='item') | list) }}
+
+    - name: Apply rulebook activations that do not exist yet
       ansible.builtin.include_role:
         name: infra.aap_configuration.eda_rulebook_activations
       vars:
-        eda_rulebook_activations: "{{ uc_eda_rulebook_activations }}"
+        eda_rulebook_activations: "{{ uc_activations_to_apply }}"
+      when: uc_activations_to_apply | length > 0
+
+    - name: Report activations left unchanged
+      ansible.builtin.debug:
+        msg: >-
+          Left running (unchanged): {{ uc_activation_lookup.results | selectattr('json.results') | map(attribute='item.name') | join(', ') }}.
+          Re-run with uc_recreate_activations=true after changing a rulebook.
+      when:
+        - not (uc_recreate_activations | default(false) | bool)
+        - uc_activation_lookup.results | selectattr('json.results') | list | length > 0

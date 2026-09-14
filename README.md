@@ -78,7 +78,7 @@ Some existing objects are referenced by name rather than created. Set them in [`
    uc_netcool_stream_token: <random string>
    uc_dynatrace_stream_password: <random string>
    ```
-5. **Launch it.** Re-run it after any change to `aap_config/`. The playbook syncs the EDA project, waits for the import, then creates the rulebook activation. An activation keeps the rulebook it was created with, so after editing a rulebook, delete the activation and re-run.
+5. **Launch it.** Re-run it after any change to `aap_config/`. The playbook syncs the EDA project, waits for the import, then creates the rulebook activation. Existing activations are left running on re-runs. An activation keeps the rulebook it was created with, so after editing a rulebook, re-run with `uc_recreate_activations: true`.
 6. **Collect the URLs:** Automation Decisions → Event Streams → copy the URL of each stream.
 
 To run from a workstation instead, export `AAP_HOSTNAME` and `AAP_TOKEN` and run `ansible-playbook playbooks/aap_configure.yml` with the collections installed.
